@@ -1,0 +1,11 @@
+.dev.vars
+.env
+node_modules/
+.wrangler/
+data/accounts.csv
+contracts/out/
+contracts/cache/
+contracts/broadcast/
+film/hyperframes/assets/
+film/blender/frames/
+*.log

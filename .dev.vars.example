@@ -1,0 +1,11 @@
+# Local secrets for `npx wrangler pages dev`. Copy to .dev.vars and fill in. Never commit .dev.vars.
+ALCHEMY_KEY=
+SUBQ_API_KEY=
+MONID_API_KEY=
+# optional: Neatlogs tracing
+NEATLOGS_API_KEY=
+# optional: local AI without the Workers AI binding
+CF_ACCOUNT_ID=
+CF_API_TOKEN=
+# set once LastSeenRegistry is launched on Robinhood Chain
+REGISTRY_ADDRESS=

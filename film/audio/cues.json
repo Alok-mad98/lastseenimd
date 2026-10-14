@@ -1,0 +1,212 @@
+[
+ {
+  "t": 0.0,
+  "frame": 0,
+  "file": "tape.mp3",
+  "gain": 0.45,
+  "what": "tape starts"
+ },
+ {
+  "t": 5.0,
+  "frame": 150,
+  "file": "switch.ogg",
+  "gain": 0.4,
+  "what": "cut to the road"
+ },
+ {
+  "t": 11.6,
+  "frame": 348,
+  "file": "message.mp3",
+  "gain": 0.6,
+  "what": "message 1 lands"
+ },
+ {
+  "t": 12.9,
+  "frame": 387,
+  "file": "message.mp3",
+  "gain": 0.6,
+  "what": "message 2 lands"
+ },
+ {
+  "t": 14.2,
+  "frame": 426,
+  "file": "message.mp3",
+  "gain": 0.6,
+  "what": "message 3 lands"
+ },
+ {
+  "t": 16.5,
+  "frame": 495,
+  "file": "impact.mp3",
+  "gain": 0.75,
+  "what": "the mark stamps in"
+ },
+ {
+  "t": 20.5,
+  "frame": 615,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 20.618,
+  "frame": 619,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 20.735,
+  "frame": 622,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 20.853,
+  "frame": 626,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 20.971,
+  "frame": 629,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 21.088,
+  "frame": 633,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 21.206,
+  "frame": 636,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 21.324,
+  "frame": 640,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 21.441,
+  "frame": 643,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 21.559,
+  "frame": 647,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 21.676,
+  "frame": 650,
+  "file": "click.ogg",
+  "gain": 0.22,
+  "what": "typing"
+ },
+ {
+  "t": 21.97,
+  "frame": 659,
+  "file": "switch.ogg",
+  "gain": 0.5,
+  "what": "PLAY pressed"
+ },
+ {
+  "t": 22.2,
+  "frame": 666,
+  "file": "tape.mp3",
+  "gain": 0.4,
+  "what": "rewind"
+ },
+ {
+  "t": 24.0,
+  "frame": 720,
+  "file": "alarm.mp3",
+  "gain": 0.55,
+  "what": "COMPROMISED slams in"
+ },
+ {
+  "t": 24.6,
+  "frame": 738,
+  "file": "message.mp3",
+  "gain": 0.5,
+  "what": "case message 1"
+ },
+ {
+  "t": 25.6,
+  "frame": 768,
+  "file": "message.mp3",
+  "gain": 0.5,
+  "what": "case message 2"
+ },
+ {
+  "t": 26.9,
+  "frame": 807,
+  "file": "message.mp3",
+  "gain": 0.5,
+  "what": "case message 3"
+ },
+ {
+  "t": 29.0,
+  "frame": 870,
+  "file": "switch.ogg",
+  "gain": 0.4,
+  "what": "cut to the trail"
+ },
+ {
+  "t": 29.5,
+  "frame": 885,
+  "file": "click.ogg",
+  "gain": 0.45,
+  "what": "node 1"
+ },
+ {
+  "t": 30.1,
+  "frame": 903,
+  "file": "click.ogg",
+  "gain": 0.45,
+  "what": "node 2"
+ },
+ {
+  "t": 30.7,
+  "frame": 921,
+  "file": "click.ogg",
+  "gain": 0.45,
+  "what": "node 3"
+ },
+ {
+  "t": 31.3,
+  "frame": 939,
+  "file": "click.ogg",
+  "gain": 0.5,
+  "what": "node 4"
+ },
+ {
+  "t": 37.93,
+  "frame": 1138,
+  "file": "tape.mp3",
+  "gain": 0.5,
+  "what": "the lamp dies"
+ },
+ {
+  "t": 38.6,
+  "frame": 1158,
+  "file": "ok.ogg",
+  "gain": 0.4,
+  "what": "end card"
+ }
+]

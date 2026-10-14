@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      /* LastSeenIMD launch film. 42 s, 1920x1080, 30 fps.
+         One dark tape world: near-black, sodium-lamp yellow for the voice, red only for the verdict.
+         Every number on screen comes from the live app or from the sources named beside it. */
+      @font-face { font-family: "VT323"; src: url("assets/VT323-Regular.ttf"); }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #000; color: #d6d8cf; font-family: "VT323", monospace; }
+      .clip { position: absolute; inset: 0; width: 1920px; height: 1080px; }
+      .data { font-family: Consolas, "Courier New", monospace; }
+      .lamp { color: #e9d37c; } .blood { color: #e0574b; } .dim { color: #8a9087; }
+      video.shot { position: absolute; inset: 0; width: 1920px; height: 1080px; object-fit: cover; image-rendering: pixelated; }
+      .vignette { position: absolute; inset: 0; background: radial-gradient(ellipse at 50% 45%, transparent 45%, rgba(0,0,0,.7) 100%); }
+      .sub { position: absolute; left: 0; right: 0; bottom: 96px; text-align: center; font-size: 62px; line-height: 1.15; color: #f4e27a; text-shadow: 0 4px 0 #000, 0 0 22px #000; opacity: 0; padding: 0 160px; }
+      .src { position: absolute; left: 70px; bottom: 34px; font-size: 26px; letter-spacing: .08em; color: #8a9087; opacity: 0; }
+      .fringe { text-shadow: 6px 0 rgba(200,70,59,.6), -6px 0 rgba(90,170,200,.5); }
+
+      /* tape layer, above everything */
+      #tape { z-index: 50; pointer-events: none; }
+      #tape .lines { position: absolute; inset: 0; background: repeating-linear-gradient(to bottom, rgba(255,255,255,.05) 0 2px, transparent 2px 6px); mix-blend-mode: screen; }
+      #tape .band { position: absolute; left: 0; width: 1920px; height: 120px; top: -140px; background: linear-gradient(to bottom, transparent, rgba(255,255,255,.07), transparent); }
+      #rec { position: absolute; left: 60px; top: 44px; font-size: 44px; color: #ff5b4d; text-shadow: 3px 0 #a22, -3px 0 #2a8; }
+      #stamp { position: absolute; right: 60px; top: 44px; font-size: 44px; color: #e8e8e0; text-shadow: 3px 0 #c33, -3px 0 #3bc; }
+
+      /* 1 card */
+      #s1 { background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+      #s1 p { font-size: 64px; line-height: 1.3; max-width: 1400px; color: #cfcfc4; }
+      #s1 p + p { margin-top: 30px; color: #f0eee4; }
+      .ch { opacity: 0; }
+
+      /* 3 phone */
+      #s3 { background: #05070a; }
+      #s3 .still { position: absolute; inset: 0; width: 1920px; height: 1080px; object-fit: cover; image-rendering: pixelated; opacity: .22; }
+      .handset { position: absolute; left: 150px; top: 130px; width: 620px; height: 820px; background: #0c0f13; border: 5px solid #2c333b; border-radius: 46px; padding: 34px 30px; box-shadow: inset 0 0 0 10px #05070a; }
+      .hbar { display: flex; justify-content: space-between; font-size: 34px; color: #9aa197; padding: 0 12px 16px; }
+      .hname { border-bottom: 2px solid #232a31; padding: 0 12px 20px; margin-bottom: 24px; }
+      .hname b { display: block; font-size: 52px; font-weight: 400; color: #fff; }
+      .hname span { font-size: 30px; letter-spacing: .1em; color: #8a9087; }
+      .bubble { background: #1b2128; border-radius: 8px 30px 30px 30px; padding: 20px 24px; font-size: 46px; line-height: 1.12; color: #ecebdf; margin-bottom: 18px; opacity: 0; width: fit-content; max-width: 520px; }
+      #s3 .claim { position: absolute; left: 880px; top: 250px; width: 900px; }
+      #s3 .claim p { font-size: 40px; letter-spacing: .14em; color: #8a9087; opacity: 0; }
+      #s3 .claim h2 { font-size: 104px; line-height: .98; font-weight: 400; color: #f0eee4; margin: 18px 0 0; opacity: 0; }
+      #s3 .claim h2 b { font-weight: 400; color: #e9d37c; }
+
+      /* 4 title */
+      #s4 { background: #07090c; }
+      #s4 img.icon { position: absolute; left: 250px; top: 250px; width: 580px; height: 580px; image-rendering: pixelated; opacity: 0; }
+      #s4 .w { position: absolute; left: 900px; top: 196px; font-size: 330px; line-height: .8; color: #f0eee4; opacity: 0; }
+      #s4 .w2 { top: 462px; }
+      #s4 .imd { position: absolute; left: 1525px; top: 520px; font-size: 120px; color: #e9d37c; opacity: 0; }
+      #s4 .tag { position: absolute; left: 906px; top: 790px; font-size: 62px; color: #e9d37c; }
+
+      /* 5 product */
+      #s5 { background: #07090c; }
+      #s5 .home { position: absolute; inset: 0; }
+      #s5 .home .ep { position: absolute; left: 150px; top: 250px; font-size: 44px; letter-spacing: .18em; color: #8a9087; }
+      #s5 .home h2 { position: absolute; left: 150px; top: 300px; font-size: 210px; font-weight: 400; line-height: .85; color: #f0eee4; }
+      #s5 .field { position: absolute; left: 150px; top: 700px; width: 1150px; height: 108px; border: 4px solid #e9d37c; background: rgba(0,0,0,.72); font-size: 46px; line-height: 100px; padding-left: 30px; color: #fff; white-space: nowrap; }
+      #s5 .play { position: absolute; left: 1324px; top: 700px; width: 300px; height: 108px; background: #e9d37c; color: #111; font-size: 70px; line-height: 108px; text-align: center; letter-spacing: .1em; }
+      #s5 .loading { position: absolute; inset: 0; background: #030406; display: flex; align-items: center; justify-content: center; font-size: 96px; letter-spacing: .14em; color: #fff; opacity: 0; }
+      #s5 .loading span { position: absolute; opacity: 0; }
+      #s5 .case { position: absolute; inset: 0; opacity: 0; }
+      #s5 .bar { position: absolute; left: 60px; top: 110px; right: 60px; height: 70px; border-bottom: 2px solid #232a31; font-size: 46px; letter-spacing: .08em; }
+      #s5 .bar b { font-weight: 400; color: #e9d37c; }
+      #s5 .phone2 { position: absolute; left: 60px; top: 210px; width: 520px; }
+      #s5 .phone2 .bubble { font-size: 42px; max-width: 520px; }
+      #s5 .phone2 .bubble.bad { background: #2a1513; }
+      #s5 .verdict { position: absolute; left: 620px; top: 210px; width: 1240px; border: 4px solid #c8463b; background: rgba(60,10,8,.86); padding: 24px 30px 28px; opacity: 0; }
+      #s5 .verdict h3 { font-size: 110px; font-weight: 400; line-height: .9; color: #fff; letter-spacing: .05em; }
+      #s5 .verdict p { font-size: 28px; line-height: 1.35; margin-top: 12px; color: #e6d9d6; }
+      #s5 .stats { position: absolute; left: 620px; top: 500px; width: 1240px; display: flex; gap: 20px; }
+      #s5 .stat { flex: 1; background: rgba(10,13,17,.9); border: 2px solid #232a31; padding: 22px 24px; opacity: 0; }
+      #s5 .stat b { display: block; font-family: Consolas, monospace; font-size: 74px; font-weight: 700; color: #fff; }
+      #s5 .stat span { font-size: 34px; letter-spacing: .08em; color: #8a9087; }
+      #s5 .stat.hot b { color: #e0574b; }
+      #s5 .rows { position: absolute; left: 620px; top: 700px; width: 1240px; }
+      #s5 .row { display: flex; justify-content: space-between; border-bottom: 2px solid #232a31; padding: 12px 6px; font-size: 40px; opacity: 0; }
+      #s5 .row i { font-style: normal; color: #e0574b; border: 2px solid #e0574b; padding: 0 12px; font-size: 30px; line-height: 40px; letter-spacing: .06em; }
+
+      /* 6 trail */
+      #s6 { background: #07090c; }
+      #s6 h2 { position: absolute; left: 100px; top: 120px; font-size: 130px; font-weight: 400; color: #f0eee4; }
+      #s6 .node { position: absolute; width: 250px; height: 120px; border: 3px solid #59606a; background: #10151a; text-align: center; font-size: 34px; line-height: 1.05; padding-top: 22px; opacity: 0; }
+      #s6 .node small { display: block; font-family: Consolas, monospace; font-size: 22px; color: #8a9087; margin-top: 6px; }
+      #s6 .node.you { border-color: #e9d37c; color: #e9d37c; } #s6 .node.bad { border-color: #c8463b; color: #ff8b7e; } #s6 .node.end { border-color: #7fa3c7; color: #a9c6e4; }
+      #s6 .wire { position: absolute; height: 6px; background: #e9d37c; width: 0; }
+      #s6 .note { position: absolute; left: 100px; top: 560px; font-size: 40px; color: #8a9087; opacity: 0; }
+      #s6 .feat { position: absolute; left: 100px; top: 660px; right: 100px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px 60px; }
+      #s6 .feat p { font-size: 48px; color: #d6d8cf; border-left: 6px solid #e9d37c; padding-left: 22px; opacity: 0; }
+
+      /* 8 end */
+      #s8 { background: #07090c; }
+      #s8 img { position: absolute; left: 360px; top: 190px; width: 1200px; height: 512px; opacity: 0; }
+      #s8 .url { position: absolute; left: 0; right: 0; top: 760px; text-align: center; font-size: 84px; color: #e9d37c; opacity: 0; }
+      #s8 .foot { position: absolute; left: 0; right: 0; top: 880px; text-align: center; font-size: 40px; letter-spacing: .12em; color: #8a9087; opacity: 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="42" data-width="1920" data-height="1080">
+
+      <!-- 1 · the black card these stories open on -->
+      <div id="s1" class="clip" data-start="0" data-duration="5" data-track-index="0">
+        <p class="type" data-at="0.5" data-cps="24">What follows was rebuilt from public blockchain records.</p>
+        <p class="type" data-at="2.95" data-cps="24">Nothing in it was made up.</p>
+      </div>
+
+      <!-- 2 · walking up to the house (rendered in Blender) -->
+      <video id="shotA" class="shot clip" src="assets/shotA.mp4" muted playsinline data-start="5" data-duration="6" data-track-index="1"></video>
+      <div id="s2" class="clip" data-start="5" data-duration="6" data-track-index="0">
+        <div class="vignette"></div>
+        <p class="sub" id="sub2a">In 2025, 80,000 people had a personal wallet emptied.</p>
+        <p class="sub" id="sub2b">$713 million gone. Drainer victims lost about $790 each.</p>
+        <p class="src" id="src2">SOURCES: CHAINALYSIS, DEC 2025 · SCAM SNIFFER 2025 REPORT</p>
+      </div>
+
+      <!-- 3 · the messages, and who answers them -->
+      <div id="s3" class="clip" data-start="11" data-duration="5.5" data-track-index="0">
+        <img class="still" src="assets/still.png" alt="" />
+        <div class="handset">
+          <div class="hbar"><span>03:14</span><span>▂▄▆ ▮▮▯</span></div>
+          <div class="hname"><b>Unknown number</b><span>TEXT MESSAGE</span></div>
+          <div class="bubble" id="b1">woke up. my wallet is empty.</div>
+          <div class="bubble" id="b2">i didn't click anything.</div>
+          <div class="bubble" id="b3">can anyone help me trace it?</div>
+        </div>
+        <div class="claim">
+          <p id="c0">THE BEST-KNOWN INVESTIGATOR SAYS HE ONLY TAKES</p>
+          <h2 id="c1">CASES ABOVE <b>$250,000</b></h2>
+          <p id="c2" style="margin-top:26px">ZACHXBT, 6 JULY 2026</p>
+        </div>
+        <p class="sub" id="sub3" style="left:880px;right:100px;bottom:170px;text-align:left;padding:0;font-size:76px">So who does everyone else ask?</p>
+      </div>
+
+      <!-- 4 · the name -->
+      <div id="s4" class="clip" data-start="16.5" data-duration="3.5" data-track-index="0">
+        <img class="icon" id="icon" src="assets/logo-icon.png" alt="" />
+        <div class="w fringe" id="w1">LAST</div>
+        <div class="w w2 fringe" id="w2">SEEN</div>
+        <div class="imd" id="imd">IMD</div>
+        <p class="tag type" data-at="17.9" data-cps="36">Paste a wallet. See what happened to it.</p>
+      </div>
+
+      <!-- 5 · the product, with the numbers the live app returns for this wallet -->
+      <div id="s5" class="clip" data-start="20" data-duration="9" data-track-index="0">
+        <div class="home" id="home">
+          <p class="ep">EPISODE 01 · YOUR WALLET</p>
+          <h2 class="fringe">LAST<br />SEEN</h2>
+          <div class="field data"><span class="type" data-at="20.5" data-cps="34">0xc6525dbbc9ac18fbf9ec93c219670b0dbb6cf2d3</span></div>
+          <div class="play" id="play">PLAY</div>
+        </div>
+        <div class="loading" id="loading"><span id="l1">CHECKING 28 CHAINS…</span><span id="l2">REWINDING THE TAPE ON 10 CHAINS…</span></div>
+        <div class="case" id="case">
+          <div class="bar">CASE FILE · <b class="data" style="font-size:36px">0xc6525dbb…b6cf2d3</b></div>
+          <div class="phone2">
+            <div class="bubble bad" id="m1">This wallet is compromised. Do not send anything to it.</div>
+            <div class="bubble bad" id="m2">An address ending 28a5 is taking funds out with transactions it sends itself.</div>
+            <div class="bubble" id="m3">It used a signature only your private key can make.</div>
+          </div>
+          <div class="verdict" id="verdict">
+            <h3>COMPROMISED</h3>
+            <p class="data">0xef94…28a5 takes funds out of this wallet by itself. Anything sent here will be taken.</p>
+          </div>
+          <div class="stats">
+            <div class="stat hot" id="st1"><b>97/100</b><span>RISK SCORE</span></div>
+            <div class="stat" id="st2"><b>28</b><span>CHAINS CHECKED</span></div>
+            <div class="stat" id="st3"><b>5</b><span>CHAINS SWEPT</span></div>
+            <div class="stat" id="st4"><b>18</b><span>LOOK-ALIKE ADDRESSES</span></div>
+          </div>
+          <div class="rows">
+            <div class="row" id="r1"><span>Base</span><i>DELEGATED TO UNKNOWN CONTRACT</i></div>
+            <div class="row" id="r2"><span>Arbitrum</span><i>DELEGATED TO UNKNOWN CONTRACT</i></div>
+            <div class="row" id="r3"><span>Optimism</span><i>DELEGATED TO UNKNOWN CONTRACT</i></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 6 · the trail (the picture is an illustration of how a trace reads, not this wallet's result) -->
+      <div id="s6" class="clip" data-start="29" data-duration="5" data-track-index="0">
+        <h2 class="fringe">FOLLOW THE MONEY</h2>
+        <div class="node you" id="n1" style="left:100px;top:340px">YOUR WALLET</div>
+        <div class="wire" id="e1" style="left:350px;top:397px"></div>
+        <div class="node bad" id="n2" style="left:520px;top:340px">SWEEPER<small>0xef94…28a5</small></div>
+        <div class="wire" id="e2" style="left:770px;top:397px"></div>
+        <div class="node" id="n3" style="left:940px;top:340px">NEXT WALLET</div>
+        <div class="wire" id="e3" style="left:1190px;top:397px"></div>
+        <div class="node end" id="n4" style="left:1360px;top:340px;width:440px">EXCHANGE, BRIDGE<br />OR MIXER</div>
+        <p class="note" id="note6">The trail stops there. Now you know who to ask.</p>
+        <div class="feat">
+          <p id="f1">28 EVM chains</p>
+          <p id="f2">Sweepers, 7702 delegations, address poisoning</p>
+          <p id="f3">Two AI models read the same evidence</p>
+          <p id="f4">Free. No wallet connection to look.</p>
+        </div>
+      </div>
+
+      <!-- 7 · someone under the lamp (rendered in Blender) -->
+      <video id="shotB" class="shot clip" src="assets/shotB.mp4" muted playsinline data-start="34" data-duration="4.3" data-track-index="1"></video>
+      <div id="s7" class="clip" data-start="34" data-duration="4.3" data-track-index="0">
+        <div class="vignette"></div>
+        <p class="sub" id="sub7">It traces and explains. It does not recover funds.</p>
+      </div>
+
+      <!-- 8 · end card -->
+      <div id="s8" class="clip" data-start="38.3" data-duration="3.7" data-track-index="0">
+        <img id="endlogo" src="assets/logo.png" alt="LastSeenIMD" />
+        <p class="url" id="url">lastseen-4pu.pages.dev</p>
+        <p class="foot" id="foot">BUILT FOR THE IDENTITY MD HACKATHON · OCTOBER 2026</p>
+      </div>
+
+      <!-- the tape, over everything -->
+      <div id="tape" class="clip" data-start="0" data-duration="42" data-track-index="5">
+        <div class="lines"></div>
+        <div class="band" id="band"></div>
+        <div id="rec">● REC</div>
+        <div id="stamp">OCT 21 2026</div>
+      </div>
+
+      <audio id="mix" src="assets/mix.wav" data-start="0" data-duration="42" data-track-index="9" data-volume="1"></audio>
+    </div>
+
+    <script>
+      // Text that types itself: every character is its own span, switched on at a fixed time, so any frame can be drawn on its own.
+      const tl = gsap.timeline({ paused: true });
+      const clipStart = el => parseFloat(el.closest(".clip").dataset.start);
+      document.querySelectorAll(".type").forEach(el => {
+        const text = el.textContent, at = parseFloat(el.dataset.at), cps = parseFloat(el.dataset.cps);
+        el.textContent = "";
+        [...text].forEach((c, i) => { const s = document.createElement("span"); s.className = "ch"; s.textContent = c; el.appendChild(s); tl.set(s, { opacity: 1 }, at + i / cps); });
+      });
+      const show = (sel, t, d = 0.35, from = {}) => tl.fromTo(sel, { opacity: 0, ...from }, { opacity: 1, x: 0, y: 0, scale: 1, rotation: 0, duration: d, ease: "power2.out" }, t);
+      const hide = (sel, t, d = 0.3) => tl.to(sel, { opacity: 0, duration: d }, t);
+
+      // tape: the tracking band rolls down every 7 s, REC blinks once a second
+      for (let t = 0; t < 42; t += 7) tl.fromTo("#band", { y: 0 }, { y: 1300, duration: 7, ease: "none", immediateRender: t === 0 }, t);
+      for (let t = 5; t < 38; t += 1) { tl.set("#rec", { opacity: 1 }, t); tl.set("#rec", { opacity: 0.25 }, t + 0.5); }
+      tl.set(["#rec", "#stamp"], { opacity: 0 }, 0); tl.set("#stamp", { opacity: 1 }, 5); tl.set(["#rec", "#stamp"], { opacity: 0 }, 38.3);
+
+      // 1 card out
+      hide("#s1 p", 4.5, 0.45);
+      // 2 road
+      tl.fromTo(["#s2", "#shotA"], { opacity: 0 }, { opacity: 1, duration: 0.5 }, 5);
+      show("#sub2a", 5.6); hide("#sub2a", 8.0); show("#sub2b", 8.3); show("#src2", 5.8); hide(["#sub2b", "#src2"], 10.6);
+      tl.to(["#s2", "#shotA"], { opacity: 0, duration: 0.3 }, 10.7);
+      // 3 phone
+      show("#b1", 11.6, 0.25, { y: 26 }); show("#b2", 12.9, 0.25, { y: 26 }); show("#b3", 14.2, 0.25, { y: 26 });
+      show("#c0", 12.2, 0.4, { x: 40 }); show("#c1", 12.7, 0.45, { x: 60 }); show("#c2", 13.3, 0.4);
+      show("#sub3", 14.8); tl.to("#s3", { opacity: 0, duration: 0.3 }, 16.2);
+      // 4 title: the mark stamps in, the word lands in two hits
+      show("#icon", 16.5, 0.35, { scale: 1.5 }); show("#w1", 16.75, 0.22, { scale: 1.8, x: 80 }); show("#w2", 17.0, 0.22, { scale: 1.8, x: 80 }); show("#imd", 17.35, 0.3, { y: -30 });
+      tl.to("#s4", { opacity: 0, duration: 0.25 }, 19.75);
+      // 5 product
+      tl.fromTo("#home", { opacity: 0 }, { opacity: 1, duration: 0.3 }, 20);
+      tl.to("#play", { scale: 0.92, duration: 0.08 }, 21.95); tl.to("#play", { scale: 1, duration: 0.1 }, 22.03);
+      tl.to("#home", { opacity: 0, duration: 0.15 }, 22.1); tl.set("#loading", { opacity: 1 }, 22.2);
+      tl.set("#l1", { opacity: 1 }, 22.2); tl.set("#l1", { opacity: 0 }, 23.0); tl.set("#l2", { opacity: 1 }, 23.0);
+      for (let t = 22.2; t < 23.5; t += 0.4) { tl.set("#loading", { opacity: 1 }, t); tl.set("#loading", { opacity: 0.55 }, t + 0.2); }
+      tl.set(["#loading", "#l1", "#l2"], { opacity: 0 }, 23.85); tl.set("#case", { opacity: 1 }, 23.85);
+      show("#verdict", 24.0, 0.3, { scale: 1.45, rotation: -1.5 });
+      show("#m1", 24.6, 0.25, { y: 24 }); show("#m2", 25.6, 0.25, { y: 24 }); show("#m3", 26.9, 0.25, { y: 24 });
+      ["#st1", "#st2", "#st3", "#st4"].forEach((s, i) => show(s, 24.7 + i * 0.28, 0.3, { y: 30 }));
+      ["#r1", "#r2", "#r3"].forEach((s, i) => show(s, 26.2 + i * 0.3, 0.3, { x: 40 }));
+      tl.to("#s5", { opacity: 0, duration: 0.25 }, 28.75);
+      // 6 trail: each wire grows, then the next box lights
+      tl.fromTo("#s6 h2", { opacity: 0, x: -60 }, { opacity: 1, x: 0, duration: 0.35 }, 29.0);
+      show("#n1", 29.5, 0.25, { scale: 0.7 }); tl.to("#e1", { width: 170, duration: 0.35, ease: "none" }, 29.75);
+      show("#n2", 30.1, 0.25, { scale: 0.7 }); tl.to("#e2", { width: 170, duration: 0.35, ease: "none" }, 30.35);
+      show("#n3", 30.7, 0.25, { scale: 0.7 }); tl.to("#e3", { width: 170, duration: 0.35, ease: "none" }, 30.95);
+      show("#n4", 31.3, 0.3, { scale: 0.7 }); show("#note6", 31.7, 0.4);
+      ["#f1", "#f2", "#f3", "#f4"].forEach((s, i) => show(s, 31.9 + i * 0.32, 0.3, { x: -30 }));
+      tl.to("#s6", { opacity: 0, duration: 0.25 }, 33.75);
+      // 7 the lamp
+      tl.fromTo(["#s7", "#shotB"], { opacity: 0 }, { opacity: 1, duration: 0.4 }, 34);
+      show("#sub7", 34.6); hide("#sub7", 37.6, 0.25);
+      // 8 end
+      show("#endlogo", 38.6, 0.5, { scale: 1.06 }); show("#url", 39.3, 0.4, { y: 20 }); show("#foot", 39.8, 0.4);
+
+      window.__timelines = window.__timelines || {};
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

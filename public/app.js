@@ -8,7 +8,8 @@
   const short = a => a ? a.slice(0, 6) + "…" + a.slice(-4) : "";
   const usd = v => v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e4 ? "$" + Math.round(v / 1e3) + "k" : "$" + Math.round(v).toLocaleString("en-US");
   let EXP = { eth: "https://etherscan.io" }, MAIN = "eth", CN = { eth: "Ethereum" }, CID = { eth: 1 };
-  const exA = (a, c) => (EXP[c || MAIN] || EXP.eth) + "/address/" + a, exT = (h, c) => (EXP[c || MAIN] || EXP.eth) + "/tx/" + h;
+  // addresses open on Arkham, which shows them on every chain at once; transactions stay on the chain's own explorer
+  const exA = a => "https://intel.arkm.com/explorer/address/" + a, exT = (h, c) => (EXP[c || MAIN] || EXP.eth) + "/tx/" + h;
   const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   const aLink = (a, name, c) => `<a href="${exA(a, c)}" target="_blank" rel="noopener" title="${a}">${esc(name || short(a))}</a>`;
   const when = ts => new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 16);
@@ -74,11 +75,14 @@
       $("loadt").textContent = "CHECKING 28 CHAINS…";
       const disc = await (await fetch("/api/discover?address=" + address)).json();
       if (disc.error) throw new Error(disc.error);
-      const pick = disc.active.slice(0, 10);
+      // every chain the wallet has used is read; one request holds at most 10 (host limits), so busy wallets take several at once
+      const pick = disc.active.slice(0, 30), groups = [];
+      for (let i = 0; i < pick.length; i += 10) groups.push(pick.slice(i, i + 10));
       $("loadt").textContent = pick.length ? "REWINDING THE TAPE ON " + pick.length + " CHAIN" + (pick.length > 1 ? "S" : "") + "…" : "REWINDING THE TAPE…";
-      const r = await fetch("/api/scan?address=" + address + (pick.length ? "&chains=" + pick.join(",") : "")); const d = await r.json();
-      if (!d.error) { d.allChains = disc.chains; d.skipped = disc.active.slice(10); }
-      if (d.error) throw new Error(d.error);
+      const parts = await Promise.all((groups.length ? groups : [[]]).map((g, i) => fetch("/api/scan?address=" + address + (g.length ? "&chains=" + g.join(",") : "")).then(r => r.json()).catch(e => ({ error: e.message, extra: i > 0 }))));
+      if (parts[0].error) throw new Error(parts[0].error);
+      const d = parts.slice(1).filter(x => !x.error).reduce(merge, parts[0]);
+      d.allChains = disc.chains; d.skipped = disc.active.slice(30).concat(groups.slice(1).filter((g, i) => parts[i + 1].error).flat()); d.contractOn = disc.chains.filter(c => c.isContract).map(c => c.key);
       await intro;
       D = d; T = null; rendered = {};
       EXP = {}; CN = {}; CID = {}; d.allChains.concat(d.chains).forEach(c => { EXP[c.key] = c.explorer; CN[c.key] = c.name; CID[c.key] = c.id; });
@@ -95,6 +99,32 @@
       subtitle(d.story[0]);
     } catch (err) { $("err").textContent = err.message || "Something went wrong. Try again."; show(false); snd("error"); $("card").hidden = true; if (window.SCENE) SCENE.retreat(); }
     $("load").hidden = true;
+  }
+
+  // two scans of different chains for the same wallet, folded into one case file
+  function merge(a, b) {
+    const sw = a.compromise.sweeper, sw2 = b.compromise.sweeper, LV = ["none", "suspected", "likely", "confirmed"];
+    const byAddr = list => Object.values(list.reduce((m, c) => { const o = m[c.address]; if (!o) m[c.address] = { ...c }; else { o.usd += c.usd; o.count += c.count; o.chains = [...new Set(o.chains.concat(c.chains))]; o.assets = [...new Set(o.assets.concat(c.assets))].slice(0, 8); o.first = Math.min(o.first || Infinity, c.first || Infinity); o.last = Math.max(o.last || 0, c.last || 0); } return m; }, {})).sort((x, y) => y.usd - x.usd || y.count - x.count);
+    const months = {}; a.series.months.concat(b.series.months).forEach(o => { const m = months[o.m] || (months[o.m] = { m: o.m, inUsd: 0, outUsd: 0, inN: 0, outN: 0 }); ["inUsd", "outUsd", "inN", "outN"].forEach(k => m[k] += o[k]); });
+    const days = { ...a.series.days }; Object.entries(b.series.days).forEach(([k, v]) => days[k] = (days[k] || 0) + v);
+    const tok = {}; a.tokensOut.concat(b.tokensOut).forEach(o => { const t = tok[o.asset] || (tok[o.asset] = { asset: o.asset, usd: 0, count: 0 }); t.usd += o.usd; t.count += o.count; });
+    const end = {}; a.endpoints.concat(b.endpoints).forEach(o => { const e = end[o.kind] || (end[o.kind] = { kind: o.kind, usd: 0, count: 0 }); e.usd += o.usd; e.count += o.count; });
+    let compromise = { ...a.compromise, delegations: a.compromise.delegations.concat(b.compromise.delegations), poisoning: a.compromise.poisoning.concat(b.compromise.poisoning), level: LV[Math.max(LV.indexOf(a.compromise.level), LV.indexOf(b.compromise.level))] };
+    let sweeps = a.sweeps.concat(b.sweeps).sort((x, y) => y.ts - x.ts).slice(0, 60), story = a.story;
+    if (!sw && sw2) { compromise.sweeper = sw2; story = b.story; }
+    else if (sw && sw2 && sw.address === sw2.address) compromise.sweeper = { ...sw, chains: [...new Set(sw.chains.concat(sw2.chains))], allChains: [...new Set(sw.allChains.concat(sw2.allChains))], totalCount: sw.totalCount + sw2.totalCount, totalUsd: sw.totalUsd + sw2.totalUsd, type4: sw.type4 || sw2.type4, swarmCase: sw.swarmCase || sw2.swarmCase };
+    else if (sw && sw2) sweeps = a.sweeps; // a different sweeper elsewhere: the first one found leads the story
+    const tA = a.totals, tB = b.totals;
+    return { ...a, chains: a.chains.concat(b.chains), compromise, sweeps, story,
+      incident: a.incident || b.incident, risk: b.risk.score > a.risk.score ? b.risk : a.risk, flags: a.flags || b.flags,
+      approvals: a.approvals || b.approvals ? (a.approvals || []).concat(b.approvals || []) : null, approvalsAvailable: a.approvalsAvailable || b.approvalsAvailable,
+      balanceEth: a.balanceEth + b.balanceEth, txCount: a.txCount + b.txCount, sent: byAddr(a.sent.concat(b.sent)).slice(0, 40), received: byAddr(a.received.concat(b.received)).slice(0, 20),
+      split: { ownUsd: a.split.ownUsd + b.split.ownUsd, ownCount: a.split.ownCount + b.split.ownCount, awayUsd: a.split.awayUsd + b.split.awayUsd, awayCount: a.split.awayCount + b.split.awayCount },
+      totals: { outUsd: tA.outUsd + tB.outUsd, inUsd: tA.inUsd + tB.inUsd, outCount: tA.outCount + tB.outCount, inCount: tA.inCount + tB.inCount, capped: tA.capped || tB.capped,
+        first: [tA.first, tB.first].filter(Boolean).length ? Math.min(...[tA.first, tB.first].filter(Boolean)) : null, last: Math.max(tA.last || 0, tB.last || 0) || null },
+      series: { months: Object.values(months).sort((x, y) => x.m < y.m ? -1 : 1), days, heat: a.series.heat.map((row, i) => row.map((v, j) => v + b.series.heat[i][j])) },
+      tokensOut: Object.values(tok).sort((x, y) => y.usd - x.usd).slice(0, 12), endpoints: Object.values(end),
+      transfers: a.transfers.concat(b.transfers).sort((x, y) => y.ts - x.ts).slice(0, 600) };
   }
 
   // ---- the story, one message at a time ----
@@ -120,6 +150,7 @@
     else if (c.level === "suspected") { v.className = "verdict warn"; v.innerHTML = `<h2>CHECK THIS</h2><p>The wallet is delegated to a contract I do not recognise on ${c.delegations.filter(x => !x.name).map(x => chip(x.chain)).join(" ")}. If you did not set that up, someone else controls the wallet.</p>`; }
     else if (d.incident) { v.className = "verdict warn"; v.innerHTML = `<h2>POSSIBLE DRAIN</h2><p>Several assets left for one address within an hour. See “The night it happened”.</p>`; }
     else { v.className = "verdict ok"; v.innerHTML = `<h2>NO THEFT FOUND</h2><p>No sweeper, no unknown delegation, no drain pattern on ${d.chains.filter(x => x.ok).length} chains. That is not a guarantee: I only read the most recent transfers.</p>`; }
+    if (d.contractOn && d.contractOn.length) v.innerHTML += `<p class="ctr">This address is a <b>contract</b> on ${d.contractOn.map(chip).join(" ")}, not a person's wallet. ${d.contractOn.slice(0, 3).map(k => `<button class="mini" type="button" data-audit="${k}:${d.address}:contract">AUDIT IT ON ${esc((CN[k] || k).toUpperCase())}</button>`).join(" ")}</p>`;
   }
   // ---- the two AI models ----
   async function opinion(d) {
@@ -148,9 +179,10 @@
     }
     if (r.models) $("ai-foot").textContent = `Note written by ${r.models.note}. Meters from ${r.models.second}. Both saw only the evidence on this page, and both can be wrong: the red banner above comes from on-chain facts, not from the models.`;
   }
-  document.addEventListener("click", async e => {
-    const b = e.target.closest("[data-audit]"); if (!b) return;
-    const [chain, addr, role] = b.dataset.audit.split(":"), body = $("dlg-body");
+  document.addEventListener("click", e => { const b = e.target.closest("[data-audit]"); if (b) audit(...b.dataset.audit.split(":")); });
+  const SWARM_CHAINS = { eth: 1, bnb: 56, robinhood: 4663, base: 8453, arb: 42161 };
+  async function audit(chain, addr, role) {
+    const body = $("dlg-body"); CN[chain] = CN[chain] || chain;
     body.innerHTML = `<h3>READING THE CONTRACT…</h3><p>${addr} on ${esc(CN[chain] || chain)}. This takes up to a minute.</p>`; $("dlg").showModal();
     let r; try { r = await (await fetch(`/api/audit?chain=${chain}&address=${addr}&role=${role || ""}`)).json(); } catch (err) { r = { error: err.message }; }
     if (r.error) { body.innerHTML = `<h3>NO AUDIT</h3><p>${esc(r.error)}</p>`; return; }
@@ -159,8 +191,9 @@
       <p>${aLink(addr, r.name || addr, chain)} on ${chip(chain)}</p><p>${esc(a.summary)}</p>
       <h4>What it can do with your funds</h4>${li(a.can_do)}<h4>Red flags</h4>${li(a.red_flags)}
       <h4>How much to trust this</h4><p>${r.basis === "source" ? "The model read the contract's public source code." : "This contract's source code is not public. The model only saw the names of functions found in its bytecode, so this is an informed guess, not an audit."} Confidence: ${esc(a.confidence || "low")}.${r.malicious == null ? "" : ` A second model puts the chance it was built to take funds at ${Math.round(r.malicious * 100)}%.`}</p>
-      <p class="foot">Written by ${esc(r.models.audit)}; second check by ${esc(r.models.second)}. An AI review is not a professional audit.</p>`;
-  });
+      <p class="foot">Written by ${esc(r.models.audit)}; second check by ${esc(r.models.second)}. An AI review is not a professional audit.</p>
+      ${SWARM_CHAINS[chain] && r.basis === "source" ? `<p><button class="go alt" type="button" data-swarm-audit="${chain}:${addr}">HIRE THE IMD SWARM TO SIGN A FINDING</button></p>` : ""}`;
+  }
 
   // the black card these stories open on; it holds for a moment even when the scan is quick
   function opening(address) {
@@ -192,6 +225,7 @@
         `<p>The swarm can only read Ethereum, Base, Arbitrum, BNB Chain and Robinhood Chain, and this sweeper was not seen on any of them.</p>`}
       ${!listed && sc ? `<button class="go" type="button" id="askSwarm" ${reg.deployed ? "" : "disabled"}>OPEN THE CASE AND ASK THE SWARM</button>` : ""}
       <p class="state" id="swarmState">${reg.deployed ? (reg.cases != null ? `${reg.cases} case${reg.cases === 1 ? "" : "s"} on the registry so far.` : "") : "The registry contract is written and tested; it goes live with the project's IMD launch. Until then this button stays off."}</p>`;
+    if (window.HUNT && !listed) HUNT.mountPost(box, d, sw, sc);
     const b = $("askSwarm"); if (!b || !reg.deployed) return;
     b.onclick = async () => {
       const st = $("swarmState");
@@ -238,7 +272,9 @@
     $("stats").innerHTML = st.map(([v, k]) => `<div class="stat"><b>${esc(v)}</b><span>${k}</span></div>`).join("");
     $("chains").innerHTML = `<div class="tw"><table><tr><th>Chain</th><th class="n">Out</th><th class="n">In</th><th class="n">Balance</th><th>Account type</th></tr>` + d.chains.map(c => !c.ok ? `<tr><td>${esc(c.name)}</td><td colspan="4">could not be read</td></tr>` :
       `<tr><td><a href="${exA(d.address, c.key)}" target="_blank" rel="noopener">${esc(c.name)}</a></td><td class="n">${c.outCount}${c.capped ? "+" : ""}</td><td class="n">${c.inCount}</td><td class="n">${c.balance.toFixed(5)} ${c.native}</td><td>${c.delegate ? (c.delegateName ? `<span class="tag swap">${esc(c.delegateName)}</span>` : `<span class="tag bad">delegated to unknown contract</span> ${aLink(c.delegate, null, c.key)}<button class="mini" type="button" data-audit="${c.key}:${c.delegate}:delegate">AUDIT</button>`) : c.isContract ? "contract" : "normal wallet"}</td></tr>`).join("") + `</table></div>` +
-      `<p class="foot" style="margin:-6px 0 14px">${d.allChains.filter(c => c.ok).length} chains checked. ${d.allChains.filter(c => c.ok).length - d.chains.length - d.skipped.length} show no activity for this address.${d.skipped.length ? " Not read this time (too many active chains): " + d.skipped.map(k => esc(CN[k] || k)).join(", ") + "." : ""}${d.allChains.some(c => !c.ok) ? " Could not be reached: " + d.allChains.filter(c => !c.ok).map(c => esc(c.name)).join(", ") + "." : ""}</p>`;
+      `<p class="foot" style="margin:-6px 0 8px">All ${d.allChains.length} chains were checked for this address. The table above holds the ${d.chains.length} it has used, read in full; the rest have no transactions from it. Click any chain to open the address there on Arkham.</p>` +
+      `<div class="allchains">${d.allChains.map(c => { const k = !c.ok ? "down" : d.chains.some(x => x.key === c.key) ? "read" : d.skipped.includes(c.key) ? "skip" : "quiet"; return `<a class="cc ${k}" href="${exA(d.address)}" target="_blank" rel="noopener" title="${esc(c.name)}: ${{ read: "used, read in full", skip: "used, but could not be read this time", quiet: "no transactions from this address", down: "could not be reached" }[k]}">${esc(c.name)}</a>`; }).join("")}</div>` +
+      `<p class="foot legend"><span class="cc read">used · read</span><span class="cc quiet">never used</span>${d.skipped.length ? '<span class="cc skip">used · not read</span>' : ""}${d.allChains.some(c => !c.ok) ? '<span class="cc down">unreachable</span>' : ""}</p>`;
     const col = d.risk.level === "high" ? C.blood : d.risk.level === "medium" ? C.lamp : C.moss;
     draw("c-gauge", { series: [{ type: "gauge", min: 0, max: 100, progress: { show: true, width: 16, itemStyle: { color: col } }, axisLine: { lineStyle: { width: 16, color: [[1, "#161b21"]] } }, pointer: { show: false }, axisTick: { show: false }, splitLine: { show: false }, axisLabel: { color: C.dim, distance: 22 },
       detail: { valueAnimation: true, formatter: "{value}", color: "#fff", fontSize: 54, fontFamily: "VT323, monospace", offsetCenter: [0, "0%"] }, title: { offsetCenter: [0, "38%"], color: col, fontSize: 18, fontFamily: "VT323, monospace" }, data: [{ value: d.risk.score, name: d.risk.level.toUpperCase() + " RISK" }] }] });
@@ -402,7 +438,6 @@
   let lastWallet = null;
   document.addEventListener("ls-wallet", e => {
     const a = e.detail.address;
-    if (a && a !== lastWallet && !D) run(a); // first connection on the title screen: go straight to the owner's own case
     lastWallet = a;
     if (D) { delete rendered.approvals; if (curTab === "approvals") render("approvals"); }
   });
@@ -427,12 +462,12 @@
       await intro;
       D = null; rendered = {};
       history.replaceState(null, "", "?a=" + address);
-      $("whoLink").textContent = address; $("whoLink").href = "https://solscan.io/account/" + address;
+      $("whoLink").textContent = address; $("whoLink").href = exA(address);
       show(true); $("tabs").hidden = true; $("swarm").hidden = true;
       document.querySelectorAll(".pane").forEach(p => p.hidden = p.id !== "p-sol");
       const comp = !!(d.taker || d.burst), v = $("verdict"); v.hidden = false;
       v.className = d.taker ? "verdict" : comp || d.delegated.length ? "verdict warn" : "verdict ok";
-      v.innerHTML = d.taker ? `<h2>FUNDS TAKEN WITHOUT YOUR SIGNATURE</h2><p>Signed by <a href="https://solscan.io/account/${esc(d.taker.signer)}" target="_blank" rel="noopener">${short(d.taker.signer)}</a> in ${d.taker.count} transaction${d.taker.count > 1 ? "s" : ""}. Treat this wallet as unsafe.</p>` :
+      v.innerHTML = d.taker ? `<h2>FUNDS TAKEN WITHOUT YOUR SIGNATURE</h2><p>Signed by <a href="${exA(esc(d.taker.signer))}" target="_blank" rel="noopener">${short(d.taker.signer)}</a> in ${d.taker.count} transaction${d.taker.count > 1 ? "s" : ""}. Treat this wallet as unsafe.</p>` :
         d.burst ? `<h2>POSSIBLE DRAIN</h2><p>Several assets left for one address within an hour.</p>` : d.delegated.length ? `<h2>OPEN DOORS</h2><p>Some token accounts still have a delegate who can move them.</p>` : `<h2>NO THEFT FOUND</h2><p>In the ${d.txRead} latest transactions on Solana.</p>`;
       tell({ story: d.story, compromise: { level: d.taker ? "confirmed" : "none" }, incident: d.burst });
       const s = []; if (d.taker) s.push("<b>Stop sending funds to this wallet.</b> Move anything left to a new wallet with a new seed phrase, made on a clean device.");
@@ -449,7 +484,7 @@
       if (pts.length) draw("c-smoves", { grid: { left: 64, right: 16, top: 30, bottom: 36 }, legend: { textStyle: { color: C.dim } }, tooltip: { ...base.tooltip, formatter: p => `${when(p.data[0] / 1000)}<br>${esc(p.data[2])} ${p.data[3] > 0 ? "in" : "out"} · ${usd(p.data[1])}` }, xAxis: { type: "time", ...axis }, yAxis: { type: "log", ...axis },
         series: [[true, "Signed by you", C.lamp], [false, "Not signed by you", C.blood]].map(([sg, n, c]) => ({ name: n, type: "scatter", symbolSize: 9, itemStyle: { color: c }, data: pts.filter(m => m.signed === sg).map(m => [m.ts * 1000, Math.max(m.u, .01), m.a, m.v, m.s]) })) })
         .on("click", p => open("https://solscan.io/tx/" + p.data[4], "_blank")); else empty("c-smoves", "No priced moves in the transactions read.");
-      const sl = a => `<a href="https://solscan.io/account/${esc(a)}" target="_blank" rel="noopener">${short(a)}</a>`;
+      const sl = a => `<a href="${exA(esc(a))}" target="_blank" rel="noopener">${short(a)}</a>`;
       $("sol-tables").innerHTML = (d.delegated.length ? `<div class="tw"><table><tr><th>Token</th><th>Delegate who can move it</th><th class="n">Amount allowed</th></tr>${d.delegated.map(x => `<tr><td>${esc(x.symbol)}</td><td>${sl(x.delegate)}</td><td class="n">${x.amount == null ? "?" : x.amount}</td></tr>`).join("")}</table></div>` : "") +
         `<div class="tw"><table><tr><th>Sent to</th><th class="n">USD today</th><th class="n">Times</th><th>Assets</th></tr>${d.sent.map(x => `<tr><td>${sl(x.address)}</td><td class="n">${usd(x.usd)}</td><td class="n">${x.count}</td><td>${esc(x.assets.join(", "))}</td></tr>`).join("") || "<tr><td colspan=4>Nothing sent in the transactions read.</td></tr>"}</table></div>` +
         `<div class="tw"><table><tr><th>Time (UTC)</th><th>Asset</th><th class="n">Change</th><th>Signed by you</th><th>Transaction</th></tr>${d.moves.slice(0, 60).map(m => `<tr><td>${when(m.ts)}</td><td>${esc(m.a)}</td><td class="n">${m.v > 0 ? "+" : ""}${Number(m.v).toLocaleString("en-US", { maximumFractionDigits: 6 })}</td><td>${m.signed ? "yes" : '<span class="tag bad">no</span>'}</td><td><a href="https://solscan.io/tx/${esc(m.s)}" target="_blank" rel="noopener">${short(m.s)}</a></td></tr>`).join("")}</table></div>`;
@@ -459,7 +494,7 @@
     } catch (err) { $("err").textContent = err.message || "Something went wrong."; show(false); snd("error"); $("card").hidden = true; if (window.SCENE) SCENE.retreat(); }
     $("load").hidden = true;
   }
-  window.LS = { run };
+  window.LS = { run, audit };
   const q = new URLSearchParams(location.search).get("a");
   if (q) { $("addr").value = q; run(q); }
 })();

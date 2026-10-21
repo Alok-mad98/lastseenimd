@@ -4,3 +4,7 @@ pages_build_output_dir = "public"
 
 [ai]
 binding = "AI"
+
+[[kv_namespaces]]
+binding = "TIPS"   # encrypted whistleblower tips and the public halves of hirers' tip keys
+id = "a692b04761ed455bb13637a371e747cf"

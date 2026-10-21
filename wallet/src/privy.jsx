@@ -25,6 +25,11 @@ function Connect() {
         const p = await wallet.getEthereumProvider();
         return p.request({ method: "eth_sendTransaction", params: [{ from: wallet.address, ...tx }] });
       },
+      // a free signature; the bounty page turns it into the key that opens private tips
+      async sign(message) {
+        const p = await wallet.getEthereumProvider();
+        return p.request({ method: "personal_sign", params: [message, wallet.address] });
+      },
     } : null;
     document.dispatchEvent(new CustomEvent("ls-wallet", { detail: { address: wallet ? wallet.address.toLowerCase() : null, fresh: true } }));
   }, [address, authenticated]);

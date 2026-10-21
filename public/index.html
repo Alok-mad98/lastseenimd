@@ -30,12 +30,18 @@
     </div>
     <p id="err" class="err" role="alert"></p>
   </form>
+  <nav class="more" aria-label="More tools">
+    <button class="ghost" type="button" data-desk="1">AUDIT A CONTRACT</button>
+    <button class="ghost" type="button" data-board="1">BOUNTY BOARD</button>
+  </nav>
   <p class="fine">Free. Checks 28 EVM chains and Solana, and reads the ones this wallet has used. No wallet connection needed to look. This traces and explains; it does not recover funds, and nobody who promises recovery in your DMs can either.</p>
 </main>
 
 <main id="case" class="case" hidden>
   <header class="bar">
     <button id="back" class="ghost" type="button">← NEW CASE</button>
+    <button class="ghost" type="button" data-board="1">BOUNTY BOARD</button>
+    <button class="ghost" type="button" data-desk="1">AUDIT</button>
     <p class="who">CASE FILE · <a id="whoLink" target="_blank" rel="noopener"></a></p>
     <label class="fx"><input type="checkbox" id="own" checked> hide my own swaps and bridges</label>
     <label class="fx"><input type="checkbox" id="fx" checked> tape effects</label>
@@ -114,7 +120,7 @@
       <div class="pane" id="p-trail" hidden>
         <p class="note" id="trail-note"></p>
         <figure><figcaption>Follow the money</figcaption><div class="ch tall" id="c-sankey"></div></figure>
-        <figure><figcaption>Evidence board · drag the pins, click one to open it on Etherscan</figcaption><div class="ch xtall" id="c-graph"></div></figure>
+        <figure><figcaption>Evidence board · drag the pins, click one to open it on Arkham</figcaption><div class="ch xtall" id="c-graph"></div></figure>
         <div class="two">
           <figure><figcaption>What the receiving address did next (all its money, not only yours)</figcaption><div class="ch" id="c-funnel"></div></figure>
           <figure><figcaption>How far each address is from the start</figcaption><div class="ch" id="c-tree"></div></figure>
@@ -180,5 +186,6 @@
 <script type="module" src="privy.bundle.js"></script>
 <script type="module" src="scene.js"></script>
 <script src="app.js"></script>
+<script src="hunt.js"></script>
 </body>
 </html>

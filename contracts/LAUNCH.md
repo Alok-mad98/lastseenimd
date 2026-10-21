@@ -2,15 +2,15 @@
 
 The hackathon requires the project to launch through the IMD Protocol. These are the steps. Steps 1, 4 and 6 need you; nothing here spends money until step 4.
 
-## 1. Put this folder on GitHub (public)
+## 1. The public repository
 
-IdentityMD builds launches from a public GitHub repository. Push the `contracts` folder (this one) as its own public repo, for example `lastseenimd-registry`. It must include `foundry.toml` with `bytecode_hash = "none"` (already set).
+The contracts are public at https://github.com/Alok-mad98/lastseenimd in the `contracts/` folder, with `foundry.toml` set to `bytecode_hash = "none"`. If the launch check refuses a project in a subfolder, push this folder alone as its own public repo and use that URL below.
 
 ## 2. Check the request for free
 
 Open https://explorer.imd.fun/launch → **Launch a company** → choose **Contracts**, chain **Robinhood Chain**, and paste this description. Press **Check**: nothing is paid at this step.
 
-> Deploy the existing Foundry project at https://github.com/YOUR_NAME/lastseenimd-registry (contract `LastSeenRegistry` in `src/LastSeenRegistry.sol`) on Robinhood Chain, contracts only, no token and no pool.
+> Deploy the existing Foundry project at https://github.com/Alok-mad98/lastseenimd (folder `contracts`, contract `LastSeenRegistry` in `contracts/src/LastSeenRegistry.sol`) on Robinhood Chain, contracts only, no token and no pool.
 > Constructor arguments, in order:
 > 1. `owner_`: $owner
 > 2. `intake_`: 0xa43e6F75ee006411F79Ac1C84120606C2330DE82
@@ -18,7 +18,7 @@ Open https://explorer.imd.fun/launch → **Launch a company** → choose **Contr
 > 4. `asset_`: 0x5F7Bb59365ce557C26dbcAa4EE9d39A4b95B7127
 > 5. `price_`: 500000000000000000
 > 6. `attester_`: 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982
-> Do not change the contract's logic. It already has 13 passing Foundry tests (`forge test`).
+> Do not change the contract's logic. It already has 20 passing Foundry tests (`forge test`).
 
 ## 3. Read the check
 
@@ -36,7 +36,7 @@ When the launch completes, it gives the deployed address. Set it on the site:
 npx wrangler pages secret put REGISTRY_ADDRESS --project-name lastseen
 ```
 
-then redeploy. The "Get this signed by the IMD swarm" panel switches on by itself.
+Also set `REGISTRY_FROM_BLOCK` to the deployment block as hex (for example `0x1a2b3c`) so the bounty board reads events from there, then redeploy. The swarm panel, the bounty board and the paid swarm audit switch on by themselves.
 
 ## 6. Fund the free pool (optional)
 

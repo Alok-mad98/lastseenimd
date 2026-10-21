@@ -35,17 +35,19 @@ Built for the **Identity MD (IMD) Hackathon**, October 2026.
 3. [A Real Case — Real Chain Data](#a-real-case--real-chain-data)
 4. [How Detection Works — Step by Step](#how-detection-works--step-by-step)
 5. [The IMD Swarm Is the Judge](#the-imd-swarm-is-the-judge)
-6. [Two AI Models, Two Jobs](#two-ai-models-two-jobs)
-7. [The Interface: A Horror Game About Your Own Wallet](#the-interface-a-horror-game-about-your-own-wallet)
-8. [Screenshots](#screenshots)
-9. [The Launch Film](#the-launch-film)
-10. [What Makes LastSeenIMD Original](#what-makes-lastseenimd-original)
-11. [Repository Layout](#repository-layout)
-12. [Quick Start](#quick-start)
-13. [The Build Log](#the-build-log)
-14. [Honest Assumptions](#honest-assumptions)
-15. [Tech Stack](#tech-stack)
-16. [License & Disclaimer](#license)
+6. [The Hunt — Hire Hunters, Stay Anonymous](#the-hunt--hire-hunters-stay-anonymous)
+7. [The Audit Desk — Free AI or the Swarm](#the-audit-desk--free-ai-or-the-swarm)
+8. [Two AI Models, Two Jobs](#two-ai-models-two-jobs)
+9. [The Interface: A Horror Game About Your Own Wallet](#the-interface-a-horror-game-about-your-own-wallet)
+10. [Screenshots](#screenshots)
+11. [The Launch Film](#the-launch-film)
+12. [What Makes LastSeenIMD Original](#what-makes-lastseenimd-original)
+13. [Repository Layout](#repository-layout)
+14. [Quick Start](#quick-start)
+15. [The Build Log](#the-build-log)
+16. [Honest Assumptions](#honest-assumptions)
+17. [Tech Stack](#tech-stack)
+18. [License & Disclaimer](#license)
 
 ---
 
@@ -82,7 +84,7 @@ The first wallet tested was the author's own: **`0xc652…f2d3`**, which kept lo
 | Finding | What the chain shows |
 |---------|----------------------|
 | **Verdict** | **COMPROMISED — 97/100** |
-| Chains checked | 28 EVM chains (15 with activity; the 10 most active read in full) |
+| Chains checked | 28 EVM chains (15 with activity, all 15 read in full) |
 | Sweeper | `0xef94…28a5` — **9 transfers** taken on **Base, Optimism, Polygon, Soneium and HyperEVM** |
 | How it took them | It sent the transactions itself ("the receiver" signed), one of them an **EIP-7702 transaction** carrying authorizations only this wallet's key can sign |
 | Delegations | The wallet is delegated to an **unrecognised contract on 5 chains — a different one on each** |
@@ -100,7 +102,7 @@ Every rule below is implemented in [`functions/api/`](functions/api/). Under eac
 
 ### Step 1 — Find where the wallet lives (`discover.js`)
 
-One small batched request per chain (nonce, balance, code) across **28 EVM chains**. The 10 most active chains are then read in full; the rest are named on screen. Delegated chains are always read first.
+One small batched request per chain (nonce, balance, code) across **28 EVM chains**. Every chain the wallet has used is then read in full, up to 10 per request with several requests in parallel; all 28 are shown on screen with their status, and every address opens on Arkham's multi-chain explorer. Delegated chains are always read first.
 
 *Plain English: before looking at what happened, find every neighbourhood the wallet has lived in.*
 
@@ -173,16 +175,71 @@ sequenceDiagram
     Note over R: any wallet, app or exchange reads the lists for free
 ```
 
-**Then the hunt starts.** A confirmed case can carry an IMD bounty. Hunters submit leads one hop at a time — "the sweeper sent funds to L" — each verified by the swarm the same way, and each confirmed hop pays the hunter **a quarter of what is left**. The next hunter starts from L. Hop by hop, the trail grows toward the exchange.
-
 | Guarantee | How |
 |-----------|-----|
+| Only the oracle can answer | Callback accepted only from the Intake, only for a request this contract made, only once, within IMD's 200,000-gas callback |
+| Only a real panel counts | EIP-712 signature from the IMD attester for **this** contract and chain; `agreed ≥ quorum`, panel ≥ 5, not expired |
+| No wasted payments | Cases and audits are limited to the 5 chains the oracle reads (Ethereum, BNB, Robinhood Chain, Base, Arbitrum) |
+| No rug | The owner can update oracle settings (IMD versions them) but cannot change the token while the contract holds funds, and has no withdraw for the pool, rewards, prepaid checks or stakes |
+
+**20 Foundry tests** cover verdicts, forged and misdirected signatures, below-quorum panels, non-Intake callers, replays, the free pool, the hunt, unsafe links, tips, stakes and the paid audit. Every question the contract asks passed IdentityMD's free `/requests/check` with no wording blockers.
+
+-----------|-----|
 | Only the oracle can answer | Callback accepted only from the Intake, only for a request this contract made, only once |
 | Only a real panel counts | EIP-712 signature from the IMD attester for **this** contract and chain; `agreed ≥ quorum`, panel ≥ 5, not expired |
 | No wasted payments | Cases are limited to the 5 chains the oracle reads (Ethereum, BNB, Robinhood Chain, Base, Arbitrum) |
 | No rug | The owner can update oracle settings (IMD versions them) but cannot change the token while the contract holds funds, and has no withdraw |
 
 **13 Foundry tests** cover confirmed and rejected verdicts, forged signatures, signatures for another contract, below-quorum panels, non-Intake callers, replays, the free pool, the hop-by-hop bounty, unsupported chains, and the callback selector `0x510379c7` from IMD's docs.
+
+---
+
+## The Hunt — Hire Hunters, Stay Anonymous
+
+A victim can hire people to find where the money went and pay them in **IMD**, without anyone learning who the hunters are. The swarm decides who gets paid.
+
+```mermaid
+sequenceDiagram
+    participant V as Victim (hirer)
+    participant R as LastSeenRegistry
+    participant H as Hunter (any fresh wallet)
+    participant W as Whistleblower (no wallet)
+    participant S as IMD swarm
+    V->>R: postBounty(case, reward, checks x 0.5 IMD prepaid, tip key hash)
+    H->>R: submitLead(case, from, to) or submitLink(case, page) + 0.5 IMD stake
+    R->>S: one yes/no question, paid from the prepaid checks
+    S-->>R: signed answer
+    alt confirmed
+        R->>H: stake back + a quarter of the reward left
+    else wrong
+        R->>R: the stake refills the victim's checks
+    end
+    W->>V: tip sealed in the browser to the victim's key (the site stores only ciphertext)
+    V->>W: payTip(case, tip, payout address, amount)
+```
+
+| | What it means |
+|---|---|
+| **The hirer pays the judge up front** | A bounty is the reward plus a number of swarm checks at 0.5 IMD each, prepaid. Whatever is left comes back when it closes. |
+| **Guessing costs the guesser** | A hunter stakes 0.5 IMD per lead. Right: the stake comes back with the reward. Wrong: the stake pays for that check instead of the victim. |
+| **Two kinds of lead the swarm can judge** | An on-chain hop ("the thief sent the money to L", checked from chain data), or a public page that ties the thief to an account (read by the panel). |
+| **Nobody needs to know who you are** | No account, name or email. Leads come from any wallet and rewards go to it. Private tips need no wallet at all: they are encrypted in the sender's browser (ECDH P-256 + AES-GCM) to a key only the victim holds, and the server stores only ciphertext, a random id and the hour, never an IP address. |
+| **The victim's key comes from a free signature** | Signing one message unlocks the victim's tip key. The hash of the public key is on chain, so a swapped key is caught in the hunter's browser. |
+
+---
+
+## The Audit Desk — Free AI or the Swarm
+
+Paste a contract's Solidity or its address into the audit desk, or paste Solidity straight into the wallet box.
+
+| | Free AI audit | Hire the swarm |
+|---|---|---|
+| **Input** | Pasted source, or any deployed contract on 28 chains | A deployed contract with verified source on Ethereum, BNB, Robinhood Chain, Base or Arbitrum |
+| **Who reads it** | GLM 5.3 lists each problem with its severity, function, how it can be abused and the fix; SubQ rates the chance it was built to take funds | Five IdentityMD agents read the verified source on Sourcify |
+| **Answer** | A report on the page, in about a minute | One signed answer on chain: *can a single privileged account move users' funds without their signature?* Anyone can read it in `auditOf` |
+| **Cost** | Free | 1 IMD: 0.5 to the swarm, 0.5 to the pool that pays for victims' verdicts |
+
+Tested on a deliberately broken vault: the free audit found the reentrancy in `withdraw()`, the owner sweep and the `tx.origin` check in `rescue()`, and SubQ put the chance it was built to take funds at 96%.
 
 ---
 
@@ -246,9 +303,10 @@ Made entirely from code, in the same style as the app:
 
 1. **It answers the victim's actual question** — *"how did this happen?"* — instead of showing a graph and leaving them to it.
 2. **Signer forensics across 28 chains.** Most tools check approvals. The fingerprint of a stolen key is *who signed the outflows*, and with EIP-7702 that question now matters on every EVM chain.
-3. **The swarm is the judge, not a checkbox.** The registry only changes on a verdict 4 of 5 independent agents signed from chain evidence; the bounty pays only for swarm-verified hops.
-4. **Free where it matters.** Looking needs no wallet. Verdicts are paid from a shared pool. Hunters, not victims, pay for leads.
-5. **Honest by design.** It never promises recovery, warns about recovery scams, labels uncertain AI output, and states what it did not read.
+3. **The swarm is the judge, not a checkbox.** The registry only changes on a verdict 4 of 5 independent agents signed; hunters are paid only for swarm-confirmed leads, and anyone can hire the swarm to audit a contract.
+4. **A whistleblower channel with no identity.** Tips are sealed in the browser to the victim's key; the server cannot read them.
+5. **Free where it matters.** Looking and the AI audit need no wallet. Verdicts are paid from a shared pool that paid audits refill. Wrong leads pay for themselves.
+6. **Honest by design.** It never promises recovery, warns about recovery scams, labels uncertain AI output, and states what it did not read.
 
 ---
 
@@ -273,10 +331,11 @@ lastseenimd/
 │       ├── trace.js           # two-hop trail + exchange deposit detection
 │       ├── sol.js             # Solana scan
 │       ├── mentions.js        # X posts + published names
-│       ├── ai.js · audit.js   # analyst note · contract audit
+│       ├── ai.js · audit.js   # analyst note · contract audit (address or pasted source)
+│       ├── tips.js            # sealed whistleblower tips (Cloudflare KV, ciphertext only)
 │       ├── registry.js        # reads LastSeenRegistry on Robinhood Chain
 │       └── _middleware.js     # per-visitor rate limits
-├── contracts/                 # Foundry: LastSeenRegistry + 13 tests + deploy script
+├── contracts/                 # Foundry: LastSeenRegistry + 20 tests + deploy script
 ├── wallet/                    # Privy connect island (React, bundled with esbuild)
 ├── film/                      # Blender, HyperFrames, soundtrack, logo, screenshot scripts
 ├── data/build_labels.py       # rebuilds public/labels from eth-labels
@@ -301,7 +360,7 @@ npx wrangler pages deploy --project-name lastseen
 npx wrangler pages secret put ALCHEMY_KEY --project-name lastseen   # and the others
 
 # 4. Contracts
-cd contracts && forge test            # 13 tests
+cd contracts && forge test            # 20 tests
 
 # 5. Rebuild the wallet bundle after editing wallet/src
 cd wallet && npm install && npm run build
@@ -323,6 +382,7 @@ The Alchemy key needs the networks you want enabled in the Alchemy dashboard; ch
 | **11 Oct** | A real compromised wallet scored 0 → rebuilt as multi-chain signer forensics: sweepers, 7702 delegations, poisoning (scored 97). GLM 5.3 + SubQ, contract audits, Privy, sound, opening card, 28-chain discovery, revoke, deposit-address detection |
 | **11 Oct** | Launch film: Blender shots, HyperFrames composition, scored soundtrack, logo |
 | **14 Oct** | LastSeenRegistry (swarm verdicts + hop-by-hop bounties, 13 tests, question accepted by IMD's checker), Solana scan, X/ENS/Farcaster lookups, rate limits, the man on the title screen |
+| **21 Oct** | The hunt (prepaid swarm checks, staked leads, page leads, sealed anonymous tips), the audit desk (pasted Solidity + paid swarm audit), every active chain read, Arkham links, 20 tests |
 
 ---
 
@@ -333,7 +393,9 @@ The Alchemy key needs the networks you want enabled in the Alchemy dashboard; ch
 - **Labels are incomplete.** 104,212 public labels cover major exchanges and bridges, not every deposit address. Deposit detection is a heuristic (≥70% forwarded to one exchange).
 - **Nothing is traced inside an exchange.** No tool can; the exchange can, on a police request. The app names the exchange and gives the evidence.
 - **AI output is labelled as AI.** The audit says when it only saw bytecode, and both models can be wrong.
-- **The registry is not yet deployed.** It is written and tested; it launches through IdentityMD on Robinhood Chain. No real swarm verdict has run yet.
+- **The registry is not yet deployed.** It is written and tested; it launches through IdentityMD on Robinhood Chain. No real swarm verdict, hunt or swarm audit has run yet; the free AI audit and sealed tips work today.
+- **The swarm reads public sources only.** It can judge an on-chain hop or a public page, not a private tip; the victim judges private tips themselves.
+- **The tip key needs a wallet that signs the same way every time** (MetaMask, Rabby, Coinbase and Privy do). The page says so if a signature cannot open it.
 - **Wallet connect and in-app revoke** are built but have not been tested end to end with a real wallet.
 
 ---

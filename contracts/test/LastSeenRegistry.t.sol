@@ -24,7 +24,7 @@ contract MockIntake is IIntake {
         id = keccak256(abi.encode(++n));
     }
     function deliver(address target, bytes32 id, OracleAttestation.Attestation calldata a, bytes calldata sig) external {
-        LastSeenRegistry(target).onOracleResult(id, a, sig);
+        LastSeenRegistry(target).onOracleResult{gas: 200_000}(id, a, sig); // the gas IdentityMD gives a callback
     }
 }
 
@@ -152,11 +152,24 @@ contract LastSeenRegistryTest is Test {
         assertEq(imd.balanceOf(address(intake)), PRICE);
     }
 
-    function test_trailPaysHuntersHopByHop() public {
-        (uint256 id, bytes32 req) = _openAndAsk();
-        OracleAttestation.Attestation memory a = _answer(true, 5);
+    function _confirmed() internal returns (uint256 id, OracleAttestation.Attestation memory a) {
+        bytes32 req;
+        (id, req) = _openAndAsk();
+        a = _answer(true, 5);
         intake.deliver(address(reg), req, a, _sign(a, attesterKey, address(reg)));
-        reg.fundBounty(id, 8 ether);
+    }
+
+    function _deliver(bytes32 req, bool yes) internal {
+        OracleAttestation.Attestation memory a = _answer(yes, 5);
+        intake.deliver(address(reg), req, a, _sign(a, attesterKey, address(reg)));
+    }
+
+    function test_trailPaysHuntersHopByHop() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 8 ether, 4, bytes32("key"), 30);
+        (address hirer,,, uint256 checks,) = reg.hunts(id);
+        assertEq(hirer, address(this));
+        assertEq(checks, 4 * PRICE);
 
         // a lead must start where the confirmed trail already is
         vm.prank(hunter);
@@ -166,23 +179,127 @@ contract LastSeenRegistryTest is Test {
         address hop = address(0x4455);
         vm.prank(hunter);
         (, bytes32 r1) = reg.submitLead(id, sweeper, hop);
-        intake.deliver(address(reg), r1, a, _sign(a, attesterKey, address(reg)));
+        _deliver(r1, true);
         assertTrue(reg.reached(id, hop));
         uint256 afterFirst = imd.balanceOf(hunter);
-        assertEq(afterFirst, 10 ether - PRICE + 2 ether); // a quarter of 8
+        assertEq(afterFirst, 10 ether + 2 ether); // stake back, plus a quarter of 8
 
         vm.prank(hunter);
         (, bytes32 r2) = reg.submitLead(id, hop, deposit);
-        intake.deliver(address(reg), r2, a, _sign(a, attesterKey, address(reg)));
-        assertEq(imd.balanceOf(hunter), afterFirst - PRICE + 1.5 ether); // a quarter of the 6 left
+        _deliver(r2, true);
+        assertEq(imd.balanceOf(hunter), afterFirst + 1.5 ether); // a quarter of the 6 left
         assertEq(reg.getCase(id).bounty, 4.5 ether);
+        (,,, checks,) = reg.hunts(id);
+        assertEq(checks, 2 * PRICE); // the hirer paid for the two checks
     }
 
-    function test_leadNeedsConfirmedCase() public {
+    function test_wrongLeadPaysForItsOwnCheck() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 4 ether, 1, 0, 30);
+        vm.prank(hunter);
+        (, bytes32 r) = reg.submitLead(id, sweeper, deposit);
+        _deliver(r, false);
+        assertEq(imd.balanceOf(hunter), 10 ether - PRICE);
+        (,,, uint256 checks,) = reg.hunts(id);
+        assertEq(checks, PRICE); // the stake refilled the hirer's prepaid check
+        assertEq(reg.getCase(id).bounty, 4 ether);
+        // the same hop can be tried again, by anyone
+        vm.prank(hunter);
+        reg.submitLead(id, sweeper, deposit);
+    }
+
+    function test_sameHopCannotBePaidTwice() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 4 ether, 2, 0, 30);
+        vm.prank(hunter);
+        reg.submitLead(id, sweeper, deposit);
+        vm.prank(hunter);
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.submitLead(id, sweeper, deposit);
+    }
+
+    function test_leadNeedsAHuntWithPrepaidChecks() public {
         (uint256 id,) = _openAndAsk();
         vm.prank(hunter);
         vm.expectRevert(LastSeenRegistry.WrongStatus.selector);
         reg.submitLead(id, sweeper, deposit);
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.postBounty(id, 1 ether, 0, 0, 30); // a hunt with no checks could never judge anything
+    }
+
+    function test_linkLeadIsJudgedByThePanelAndPays() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 4 ether, 1, 0, 30);
+        address anon = address(0xA407); // a fresh wallet with nothing else on it
+        imd.mint(anon, PRICE);
+        vm.startPrank(anon);
+        imd.approve(address(reg), PRICE);
+        (, bytes32 r) = reg.submitLink(id, "https://x.com/someone/status/123");
+        vm.stopPrank();
+        bytes memory body = intake.lastBody();
+        assertEq(body[body.length - 1], bytes1("}"));
+        _deliver(r, true);
+        assertEq(imd.balanceOf(anon), PRICE + 1 ether);
+    }
+
+    function test_unsafeLinksRefused() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 4 ether, 2, 0, 30);
+        vm.startPrank(hunter);
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.submitLink(id, "http://plain.example/x");
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.submitLink(id, 'https://x.com/a","evil":"1');
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.submitLink(id, "https://x.com/a b");
+        reg.submitLink(id, "https://x.com/a");
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.submitLink(id, "https://x.com/a"); // once per case
+        vm.stopPrank();
+    }
+
+    function test_onlyHirerPaysTipsAndCloses() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 4 ether, 1, 0, 7);
+        vm.prank(hunter);
+        vm.expectRevert(LastSeenRegistry.NotHirer.selector);
+        reg.payTip(id, bytes32("t"), hunter, 1 ether);
+        reg.payTip(id, bytes32("t"), address(0x71B), 1 ether);
+        assertEq(imd.balanceOf(address(0x71B)), 1 ether);
+        vm.expectRevert(LastSeenRegistry.WrongStatus.selector);
+        reg.closeBounty(id); // still open
+        vm.warp(block.timestamp + 8 days);
+        uint256 before = imd.balanceOf(address(this));
+        reg.closeBounty(id);
+        assertEq(imd.balanceOf(address(this)), before + 3 ether + PRICE);
+    }
+
+    function test_unansweredLeadReturnsStake() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 4 ether, 1, 0, 7);
+        vm.prank(hunter);
+        (uint256 lead,) = reg.submitLead(id, sweeper, deposit);
+        vm.expectRevert(LastSeenRegistry.WrongStatus.selector);
+        reg.reclaimStake(lead);
+        vm.warp(block.timestamp + 3 days);
+        reg.reclaimStake(lead);
+        assertEq(imd.balanceOf(hunter), 10 ether);
+        vm.warp(block.timestamp + 30 days);
+        reg.closeBounty(id); // nothing left waiting
+    }
+
+    function test_swarmAuditFeedsThePool() public {
+        address token = address(0x70CE);
+        (uint256 aid, bytes32 r) = reg.requestAudit(8453, token);
+        assertEq(reg.pool(), PRICE); // the audit fee
+        assertEq(uint8(reg.auditOf(8453, token)), uint8(LastSeenRegistry.Finding.Asked));
+        string memory body = reg.auditBody(8453, token);
+        assertEq(keccak256(intake.lastBody()), keccak256(bytes(body)));
+        _deliver(r, true);
+        assertEq(uint8(reg.auditOf(8453, token)), uint8(LastSeenRegistry.Finding.CanTakeFunds));
+        assertEq(uint8(reg.getAudit(aid).finding), uint8(LastSeenRegistry.Finding.CanTakeFunds));
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.requestAudit(10, token);
     }
 
     function test_bodyIsValidJsonShape() public {

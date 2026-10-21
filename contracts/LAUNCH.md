@@ -4,13 +4,13 @@ The hackathon requires the project to launch through the IMD Protocol. These are
 
 ## 1. The public repository
 
-The contracts are public at https://github.com/Alok-mad98/lastseenimd in the `contracts/` folder, with `foundry.toml` set to `bytecode_hash = "none"`. If the launch check refuses a project in a subfolder, push this folder alone as its own public repo and use that URL below.
+The contracts are public at https://github.com/Alok-mad98/lastseenimd-registry, a Foundry project at the top level with `foundry.toml` set to `bytecode_hash = "none"`. The app that uses them is https://github.com/Alok-mad98/lastseenimd.
 
 ## 2. Check the request for free
 
 Open https://explorer.imd.fun/launch → **Launch a company** → choose **Contracts**, chain **Robinhood Chain**, and paste this description. Press **Check**: nothing is paid at this step.
 
-> Deploy the existing Foundry project at https://github.com/Alok-mad98/lastseenimd (folder `contracts`, contract `LastSeenRegistry` in `contracts/src/LastSeenRegistry.sol`) on Robinhood Chain, contracts only, no token and no pool.
+> Deploy the existing Foundry project at https://github.com/Alok-mad98/lastseenimd-registry (contract `LastSeenRegistry` in `src/LastSeenRegistry.sol`) on Robinhood Chain, contracts only, no token and no pool.
 > Constructor arguments, in order:
 > 1. `owner_`: $owner
 > 2. `intake_`: 0xa43e6F75ee006411F79Ac1C84120606C2330DE82

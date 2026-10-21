@@ -1,10 +1,10 @@
-import { json } from "../_lib.js";
+import { json, rpc, chainOf, isAddr } from "../_lib.js";
 
 // Private tips for a bounty. Everything here is already encrypted in the sender's browser; this only stores and hands back bytes.
 //   POST {kind:"key", pub, wrapped, iv}               a hirer's tip key: the public half, and the private half locked with their wallet signature
 //   GET  ?key=<sha-256 of pub, hex>                   that key, for hunters (who check the hash against the bounty on chain) and for the hirer
 //   POST {kind:"tip", caseId, keyId, epk, iv, ct}     a tip, sealed to the hirer's public key with a one-time key
-//   GET  ?caseId=N                                    the sealed tips for a case; only the hirer can open them
+//   GET  ?caseId=N[&cursor=…]                         the sealed tips for a case, 100 a page; only the hirer can open them
 // No name, email, account or IP address is stored with a tip. The ids are random.
 const B64 = /^[A-Za-z0-9+/]+={0,2}$/, HEX32 = /^[0-9a-f]{64}$/;
 const b64ok = (s, min, max) => typeof s === "string" && s.length >= min && s.length <= max && B64.test(s);
@@ -22,9 +22,9 @@ export async function onRequestGet({ request, env }) {
   }
   const caseId = q.get("caseId");
   if (!/^\d{1,9}$/.test(caseId || "")) return json({ error: "Give a case number." }, 400);
-  const list = await env.TIPS.list({ prefix: "tip:" + caseId + ":", limit: 100 });
+  const list = await env.TIPS.list({ prefix: "tip:" + caseId + ":", limit: 100, cursor: q.get("cursor") || undefined });
   const tips = (await Promise.all(list.keys.map(k => env.TIPS.get(k.name, "json")))).filter(Boolean);
-  return json({ caseId: Number(caseId), tips });
+  return json({ caseId: Number(caseId), tips, cursor: list.list_complete ? null : list.cursor });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -34,13 +34,20 @@ export async function onRequestPost({ request, env }) {
     // a raw P-256 public key is 65 bytes (88 base64 characters); the locked private half is a few hundred
     if (!b64ok(b.pub, 88, 88) || !b64ok(b.wrapped, 100, 400) || !b64ok(b.iv, 16, 16)) return json({ error: "That is not a tip key." }, 400);
     const id = hex(await crypto.subtle.digest("SHA-256", bytes(b.pub)));
-    // stored under its own hash, so nobody can swap a hirer's key for theirs
+    // stored under its own hash, so nobody can swap a hirer's key for theirs, and written once, so nobody can spoil the locked half
+    if (await env.TIPS.get("key:" + id)) return json({ id, existed: true });
     await env.TIPS.put("key:" + id, JSON.stringify({ id, pub: b.pub, wrapped: b.wrapped, iv: b.iv }));
     return json({ id });
   }
   if (b.kind === "tip") {
     const keyId = String(b.keyId || "").toLowerCase().replace(/^0x/, "");
     if (!/^\d{1,9}$/.test(String(b.caseId)) || !HEX32.test(keyId) || !b64ok(b.epk, 88, 88) || !b64ok(b.iv, 16, 16) || !b64ok(b.ct, 24, 16000)) return json({ error: "That is not a sealed tip." }, 400);
+    // once the registry is live, a tip is only kept for a case whose bounty names this key, so junk cannot pile up on other cases
+    const reg = (env.REGISTRY_ADDRESS || "").toLowerCase();
+    if (isAddr(reg)) {
+      const r = await rpc(env, "eth_call", [{ to: reg, data: "0x15f3598b" + BigInt(b.caseId).toString(16).padStart(64, "0") }, "latest"], chainOf("robinhood")).catch(() => null);
+      if (!r || r.slice(2 + 64 * 4, 2 + 64 * 5) !== keyId) return json({ error: "That case has no bounty with this tip key." }, 400);
+    }
     const id = hex(crypto.getRandomValues(new Uint8Array(32))), at = Math.floor(Date.now() / 1000);
     const tip = { id, caseId: Number(b.caseId), keyId, epk: b.epk, iv: b.iv, ct: b.ct, at };
     // kept for a year; the time is rounded to the hour so it says little about who sent it

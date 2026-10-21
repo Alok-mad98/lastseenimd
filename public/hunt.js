@@ -206,7 +206,10 @@
     if ($("tp-open")) $("tp-open").onclick = async () => {
       const box = $("tp-list"); box.innerHTML = `<p class="state">Sign in your wallet to open the key…</p>`;
       try {
-        const t = await getJ("/api/tips?caseId=" + id), list = await unseal(h.hunt.tipKey, t.tips);
+        let all = [], cursor = "";
+        for (let page = 0; page < 20; page++) { const t = await getJ("/api/tips?caseId=" + id + (cursor ? "&cursor=" + encodeURIComponent(cursor) : "")); all = all.concat(t.tips); if (!t.cursor) break; cursor = t.cursor; }
+        // only tips sealed to this bounty's key can be opened; anything else is noise
+        const list = (await unseal(h.hunt.tipKey, all.filter(t => ("0x" + t.keyId) === h.hunt.tipKey.toLowerCase()))).filter(t => t.msg);
         const paid = new Set(h.tipsPaid.map(x => x.tipId.toLowerCase()));
         box.innerHTML = list.length ? list.map(t => `<div class="tip"><div class="hmeta"><span>${new Date(t.at * 1000).toISOString().slice(0, 13).replace("T", " ")}:00 UTC</span>${t.msg && t.msg.payout ? `<span>pay to ${aLink(t.msg.payout)}</span>` : "<span>no payout address</span>"}${paid.has("0x" + t.id) ? '<span class="tag swap">paid</span>' : ""}</div>
           <p>${t.msg ? esc(t.msg.text) : "<i>This one could not be opened.</i>"}</p>

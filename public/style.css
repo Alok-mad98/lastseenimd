@@ -243,3 +243,10 @@ a.cc:hover{background:var(--lamp);color:#111;opacity:1}
 .checks li.clear b{color:var(--moss)}.checks li.na b{color:var(--dim)}
 .ends-h{font:400 22px/1 var(--game);letter-spacing:.08em;color:var(--lamp);margin:4px 0 6px}
 .tag.solana{color:var(--violet,#a48bd1)}.tag.offsite{color:var(--sand,#c9a36b)}
+
+/* the revoke center */
+.owner{background:var(--panel);border:1px solid var(--lamp);border-left:3px solid var(--lamp);padding:10px 14px;margin-bottom:12px;font-size:14px}
+.owner .mini{margin-left:10px}
+.ap-all{display:inline-flex;gap:8px;margin-left:8px;flex-wrap:wrap}.ap-all .mini{margin:4px 0 0}
+#p-approvals h4{font:400 20px/1 var(--game);letter-spacing:.1em;color:var(--lamp);margin:16px 0 6px}
+#ap-del p{font-size:13px;max-width:920px}

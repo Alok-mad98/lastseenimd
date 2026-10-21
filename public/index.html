@@ -62,13 +62,14 @@
 
     <section class="board">
       <div id="verdict" class="verdict" hidden></div>
+      <div id="owner" class="owner" hidden></div>
       <nav class="tabs" id="tabs" role="tablist">
         <button data-t="overview" class="on" type="button">OVERVIEW</button>
         <button data-t="incident" type="button">THE NIGHT IT HAPPENED</button>
         <button data-t="trail" type="button">THE TRAIL</button>
         <button data-t="money" type="button">MONEY</button>
         <button data-t="habits" type="button">HABITS</button>
-        <button data-t="approvals" type="button">OPEN DOORS</button>
+        <button data-t="approvals" type="button">OPEN DOORS · REVOKE</button>
         <button data-t="online" type="button">SEEN ONLINE</button>
       </nav>
 
@@ -166,9 +167,13 @@
       </div>
 
       <div class="pane" id="p-approvals" hidden>
+        <p class="note" id="ap-who"></p>
+        <p class="note bad" id="ap-warn" hidden></p>
+        <div id="ap-del"></div>
         <p class="note" id="ap-note"></p>
         <figure><figcaption>Open permissions by token</figcaption><div class="ch" id="c-apbar"></div></figure>
         <div id="ap-table"></div>
+        <div id="ap-nft"></div>
       </div>
     </section>
   </div>

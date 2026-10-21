@@ -101,7 +101,7 @@
       EXP = {}; CN = {}; CID = {}; d.allChains.concat(d.chains).forEach(c => { EXP[c.key] = c.explorer; CN[c.key] = c.name; CID[c.key] = c.id; });
       const sw0 = d.compromise.sweeper || d.compromise.keySweep, busiest = d.chains.filter(c => c.ok).sort((a, b) => (b.outCount + b.inCount) - (a.outCount + a.inCount))[0];
       MAIN = sw0 ? sw0.chains[0] : d.incident ? d.incident.chain : busiest ? busiest.key : "eth";
-      verdict(d); opinion(d); swarm(d);
+      verdict(d); opinion(d); swarm(d); ownerStrip();
       history.replaceState(null, "", "?a=" + address);
       $("whoLink").textContent = address; $("whoLink").href = exA(address);
       document.querySelectorAll("[data-seen]").forEach(el => delete el.dataset.seen);
@@ -573,37 +573,86 @@
   }
 
   function approvals() {
-    const a = D.approvals, n = $("ap-note");
-    if (a === null) { n.textContent = "The permission list could not be loaded right now. Try again in a minute."; empty("c-apbar", ""); $("ap-table").innerHTML = ""; return; }
-    if (!a.length) { n.textContent = "No contract has permission to move this wallet's tokens. Nothing to close."; empty("c-apbar", "No open permissions."); $("ap-table").innerHTML = ""; return; }
-    n.innerHTML = `A permission lets a contract move a token out of this wallet without asking again. ${D.risk.counts.risky ? `<b>${D.risk.counts.risky} point to a flagged contract.</b> ` : ""}${D.risk.counts.unlimited} are unlimited. Close the ones you do not use: ${mineNow() ? "Press REVOKE next to one and confirm it in your wallet; each costs a little gas." : `Connect this wallet (bottom left) to revoke here, or <a href="https://revoke.cash/address/${D.address}" target="_blank" rel="noopener">use Revoke.cash</a>.`}${D.compromise.level !== "none" ? " <b>This wallet's key is compromised, so revoking will not make it safe.</b>" : ""}`;
-    const by = {}; a.forEach(x => { const o = by[x.token] || (by[x.token] = { ok: 0, bad: 0 }); x.risky ? o.bad++ : o.ok++; });
-    const ks = Object.keys(by).sort((p, q) => by[q].ok + by[q].bad - by[p].ok - by[p].bad).slice(0, 14).reverse();
-    draw("c-apbar", { grid: { left: 90, right: 20, top: 26, bottom: 24 }, legend: { textStyle: { color: C.dim } }, tooltip: { ...base.tooltip, trigger: "axis" }, xAxis: { type: "value", minInterval: 1, ...axis }, yAxis: { type: "category", data: ks, ...axis },
-      series: [{ name: "Open", type: "bar", stack: "s", itemStyle: { color: C.lamp }, data: ks.map(k => by[k].ok) }, { name: "Flagged", type: "bar", stack: "s", itemStyle: { color: C.blood }, data: ks.map(k => by[k].bad) }] });
-    const rows = a.slice().sort((p, q) => (q.risky - p.risky) || (q.unlimited - p.unlimited));
-    $("ap-table").innerHTML = `<div class="tw"><table><tr><th>Token</th><th>Who can spend it</th><th>How much</th><th>Status</th></tr>` + rows.map(x =>
-      `<tr><td>${esc(x.token)} ${chip(x.chain)}</td><td>${mineNow() ? `<button class="mini danger" type="button" data-revoke="${x.chain}:${x.tokenAddress}:${x.spender}">REVOKE</button>` : ""}${aLink(x.spender, x.spenderName, x.chain)}${x.isContract ? `<button class="mini" type="button" data-audit="${x.chain}:${x.spender}:spender">AUDIT</button>` : ""}</td><td>${x.unlimited ? "Unlimited" : esc(String(x.amount).slice(0, 18))}</td><td>${x.risky ? '<span class="tag bad">flagged</span>' : x.trusted ? '<span class="tag swap">well known</span>' : !x.openSource && x.isContract ? '<span class="tag unknown">code not public</span>' : '<span class="tag other">open</span>'}</td></tr>`).join("") + `</table></div>`;
+    const a = D.approvals, n = $("ap-note"), c = D.compromise, me = window.LS_WALLET && window.LS_WALLET.address;
+    const keyGone = c.sweeper || c.keySweep || c.level === "confirmed";
+    // who is looking decides what the pane can do
+    $("ap-who").innerHTML = mineNow()
+      ? `<b>This is your wallet and it is connected.</b> Press REVOKE next to a permission and confirm it in your wallet; each one is a small transaction with a little gas. <span class="ap-all"><button class="mini danger" type="button" data-revoke-all="flagged">REVOKE ALL FLAGGED</button><button class="mini danger" type="button" data-revoke-all="all">REVOKE EVERYTHING</button></span>`
+      : me ? `You are connected as ${aLink(me)}, but this case is ${aLink(D.address)}. Connect ${short(D.address)} itself to revoke its permissions here.`
+      : `To revoke here, connect this wallet with the button at the bottom left. Looking needs no wallet; revoking does, because only the owner can close a permission. Or use <a href="https://revoke.cash/address/${D.address}" target="_blank" rel="noopener">Revoke.cash</a>.`;
+    $("ap-warn").innerHTML = keyGone ? `<b>Revoking will not save this wallet.</b> Someone else has its key and can sign new permissions or move funds directly. Revoke anyway if you like, but move anything left with a protected rescue (see the objectives) and stop using this wallet.` : "";
+    $("ap-warn").hidden = !keyGone;
+    // EIP-7702 delegations: a wallet transaction cannot undo them, only the wallet app can
+    const del = c.delegations.filter(x => !x.name);
+    $("ap-del").innerHTML = del.length ? `<h4>DELEGATIONS TO UNKNOWN CONTRACTS</h4><p>This wallet is set to run ${del.length > 1 ? "these contracts" : "this contract"}: ${del.map(x => `${aLink(x.delegate)} on ${chip(x.chain)}`).join(", ")}. A permission revoke cannot remove a delegation. Your wallet app has to sign a new one that points nowhere: in MetaMask, open the account's details and switch it back to a regular account on each of those networks; in other wallets look for “smart account” or “EIP-7702” in the account settings.${keyGone ? " With a stolen key the attacker can set it again, so this only helps if the key is safe." : ""}</p>` : "";
+    if (a === null) { n.textContent = "The token permissions could not be loaded right now. Try again in a minute."; empty("c-apbar", ""); $("ap-table").innerHTML = ""; }
+    else if (!a.length) { n.textContent = "No contract has permission to move this wallet's tokens."; empty("c-apbar", "No open token permissions."); $("ap-table").innerHTML = ""; }
+    else {
+      n.innerHTML = `A permission lets a contract move a token out of this wallet without asking again. ${D.risk.counts.risky ? `<b>${D.risk.counts.risky} point to a flagged contract.</b> ` : ""}${D.risk.counts.unlimited} are unlimited. Close the ones you do not use.`;
+      const by = {}; a.forEach(x => { const o = by[x.token] || (by[x.token] = { ok: 0, bad: 0 }); x.risky ? o.bad++ : o.ok++; });
+      const ks = Object.keys(by).sort((p, q) => by[q].ok + by[q].bad - by[p].ok - by[p].bad).slice(0, 14).reverse();
+      draw("c-apbar", { grid: { left: 90, right: 20, top: 26, bottom: 24 }, legend: { textStyle: { color: C.dim } }, tooltip: { ...base.tooltip, trigger: "axis" }, xAxis: { type: "value", minInterval: 1, ...axis }, yAxis: { type: "category", data: ks, ...axis },
+        series: [{ name: "Open", type: "bar", stack: "s", itemStyle: { color: C.lamp }, data: ks.map(k => by[k].ok) }, { name: "Flagged", type: "bar", stack: "s", itemStyle: { color: C.blood }, data: ks.map(k => by[k].bad) }] });
+      const rows = a.slice().sort((p, q) => (q.risky - p.risky) || (q.unlimited - p.unlimited));
+      $("ap-table").innerHTML = `<h4>TOKENS</h4><div class="tw"><table><tr><th>Token</th><th>Who can spend it</th><th>How much</th><th>Status</th><th></th></tr>` + rows.map(x =>
+        `<tr><td>${esc(x.token)} ${chip(x.chain)}</td><td>${aLink(x.spender, x.spenderName)}${x.isContract ? `<button class="mini" type="button" data-audit="${x.chain}:${x.spender}:spender">AUDIT</button>` : ""}</td><td>${x.unlimited ? "Unlimited" : esc(String(x.amount).slice(0, 18))}</td><td>${x.risky ? '<span class="tag bad">flagged</span>' : x.trusted ? '<span class="tag swap">known</span>' : x.isContract && !x.openSource ? '<span class="tag other">closed source</span>' : ""}</td><td>${mineNow() ? `<button class="mini danger" type="button" data-revoke="erc20:${x.chain}:${x.tokenAddress}:${x.spender}"${x.risky ? " data-flagged" : ""}>REVOKE</button>` : ""}</td></tr>`).join("") + `</table></div>`;
+    }
+    nftDoors();
   }
 
+  // NFT permissions are loaded on their own: setApprovalForAll is how most NFT drainers work
+  async function nftDoors() {
+    const box = $("ap-nft"), mine = D.address, keys = D.chains.filter(x => x.ok && (x.outCount || x.inCount)).map(x => x.key).slice(0, 10);
+    box.innerHTML = `<p class="foot">Checking NFT permissions…</p>`;
+    let r; try { r = await (await fetch(`/api/nftapprovals?address=${mine}&chains=${keys.join(",")}`)).json(); } catch (e) { r = { error: e.message }; }
+    if (!D || D.address !== mine) return;
+    if (r.error) { box.innerHTML = `<p class="foot">NFT permissions could not be loaded: ${esc(r.error)}</p>`; return; }
+    if (!r.approvals.length) { box.innerHTML = `<h4>NFTS</h4><p class="foot">No contract can move this wallet's NFTs.</p>`; return; }
+    box.innerHTML = `<h4>NFTS · ${r.approvals.length} OPEN</h4><div class="tw"><table><tr><th>Collection</th><th>Who can move it</th><th>What</th><th>Status</th><th></th></tr>` + r.approvals.map(x =>
+      `<tr><td>${esc(x.collection)} ${chip(x.chain)}</td><td>${aLink(x.spender, x.spenderName)}</td><td>${x.forAll ? "Every NFT in the collection" : "Token #" + esc(String(x.tokenId).slice(0, 12))}</td><td>${x.risky ? '<span class="tag bad">flagged</span>' : x.trusted ? '<span class="tag swap">known</span>' : ""}</td><td>${mineNow() ? `<button class="mini danger" type="button" data-revoke="${x.forAll ? "nftall" : "nft1"}:${x.chain}:${x.tokenAddress}:${x.spender}:${x.forAll ? "" : esc(String(x.tokenId))}"${x.risky ? " data-flagged" : ""}>REVOKE</button>` : ""}</td></tr>`).join("") + `</table></div>`;
+  }
+
+
   // ---- actions only the owner can take ----
+  function ownerStrip() {
+    const o = $("owner"); if (!D) { o.hidden = true; return; }
+    const n = (D.approvals || []).length;
+    o.hidden = !mineNow();
+    o.innerHTML = `<b>YOUR WALLET IS CONNECTED.</b> ${n ? `${n} token permission${n > 1 ? "s are" : " is"} open${D.risk.counts.risky ? `, ${D.risk.counts.risky} flagged` : ""}.` : "You can check and close its permissions here."} <button class="mini danger" type="button" id="toRevoke">OPEN THE REVOKE CENTER</button>`;
+    const t = $("toRevoke"); if (t) t.onclick = () => { tab("approvals"); $("p-approvals").scrollIntoView({ block: "start" }); };
+  }
   const mineNow = () => !!(window.LS_WALLET && D && window.LS_WALLET.address === D.address);
   let lastWallet = null;
   document.addEventListener("ls-wallet", e => {
     const a = e.detail.address;
     lastWallet = a;
-    if (D) { delete rendered.approvals; if (curTab === "approvals") render("approvals"); }
+    if (D) { delete rendered.approvals; if (curTab === "approvals") render("approvals"); ownerStrip(); }
   });
-  document.addEventListener("click", async e => {
-    const b = e.target.closest("[data-revoke]"); if (!b || !window.LS_WALLET) return;
-    const [chain, token, spender] = b.dataset.revoke.split(":");
+  // approve(spender, 0) closes a token permission; setApprovalForAll(operator, false) an NFT one; approve(0, id) a single NFT
+  async function revokeOne(b) {
+    const [kind, chain, token, spender, id] = b.dataset.revoke.split(":");
+    if (kind === "nft1" && !/^\d+$/.test(id || "")) { b.textContent = "REVOKE IN WALLET"; return false; }
+    const data = kind === "erc20" ? "0x095ea7b3" + spender.slice(2).padStart(64, "0") + "0".repeat(64)
+      : kind === "nftall" ? "0xa22cb465" + spender.slice(2).padStart(64, "0") + "0".repeat(64)
+      : "0x095ea7b3" + "0".repeat(64) + BigInt(id).toString(16).padStart(64, "0");
     b.disabled = true; b.textContent = "CHECK WALLET…";
     try {
-      // approve(spender, 0): the standard way to take a spending permission back
-      const hash = await window.LS_WALLET.send(CID[chain], { to: token, data: "0x095ea7b3" + spender.slice(2).padStart(64, "0") + "0".repeat(64) });
-      b.outerHTML = `<a href="${exT(hash, chain)}" target="_blank" rel="noopener">revoke sent ↗</a> `; snd("ok");
-    } catch (err) { b.disabled = false; b.textContent = "REVOKE"; snd("error"); alert("The revoke was not sent: " + ((err && (err.shortMessage || err.message)) || "cancelled")); }
+      const hash = await window.LS_WALLET.send(CID[chain], { to: token, data });
+      b.outerHTML = `<a href="${exT(hash, chain)}" target="_blank" rel="noopener">revoke sent ↗</a>`; snd("ok"); return true;
+    } catch (err) { b.disabled = false; b.textContent = "REVOKE"; snd("error"); b.title = "Not sent: " + ((err && (err.shortMessage || err.message)) || "cancelled"); return false; }
+  }
+  document.addEventListener("click", async e => {
+    const b = e.target.closest("[data-revoke]");
+    if (b && mineNow()) return revokeOne(b);
+    const all = e.target.closest("[data-revoke-all]"); if (!all || !mineNow()) return;
+    // one after another, so the wallet asks for each; stop if the owner cancels one
+    const list = [...document.querySelectorAll("#p-approvals [data-revoke]")].filter(x => all.dataset.revokeAll === "all" || x.hasAttribute("data-flagged"));
+    if (!list.length) { all.textContent = "NOTHING TO REVOKE"; return; }
+    all.disabled = true;
+    for (let k = 0; k < list.length; k++) { all.textContent = `REVOKING ${k + 1} OF ${list.length}…`; if (!(await revokeOne(list[k]))) break; }
+    all.disabled = false; all.textContent = all.dataset.revokeAll === "all" ? "REVOKE EVERYTHING" : "REVOKE ALL FLAGGED";
   });
+
   // ---- Solana: one page, its own signals ----
   async function runSol(address) {
     $("err").textContent = "";

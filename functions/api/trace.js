@@ -22,7 +22,8 @@ export async function onRequestGet(ctx) {
       await t.step("defillama_prices", { hop, transfers: flat.length }, () => priceAll(flat));
       const next = {};
       for (const t of flat) {
-        if (t.to === t.from) continue;
+        // burns (the zero and dead addresses) destroy tokens or redeem them; nobody received them, so they are not part of the trail
+        if (t.to === t.from || t.to === "0x0000000000000000000000000000000000000000" || t.to === "0x000000000000000000000000000000000000dead") continue;
         const k = t.from + ">" + t.to, l = next[k] || (next[k] = { source: t.from, target: t.to, usd: 0, count: 0, assets: {}, first: t.ts, hashes: [] });
         l.usd += t.usd; l.count++; l.assets[t.asset] = 1; l.first = Math.min(l.first, t.ts); if (l.hashes.length < 3 && !l.hashes.includes(t.hash)) l.hashes.push(t.hash);
       }

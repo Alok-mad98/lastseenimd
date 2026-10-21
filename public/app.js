@@ -6,7 +6,7 @@
   const KNAME = { exchange: "Exchange", mixer: "Mixer", bad: "Flagged", sanctioned: "Sanctioned", bridge: "Bridge", swap: "Swap / DEX", unknown: "No label", other: "Known contract", start: "Start", poison: "Look-alike (poisoning)", deposit: "Exchange deposit address", solana: "Bridged to Solana", offsite: "On another chain", contract: "Contract (DEX or protocol)" };
   const PAL = [C.lamp, C.cold, C.moss, C.blood, C.violet, C.sand, "#9aa7b1", "#d98f6c"];
   const short = a => a ? a.slice(0, 6) + "…" + a.slice(-4) : "";
-  const usd = v => v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e4 ? "$" + Math.round(v / 1e3) + "k" : "$" + Math.round(v).toLocaleString("en-US");
+  const usd = v => v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e4 ? "$" + Math.round(v / 1e3) + "k" : v > 0 && v < 1 ? "$" + v.toFixed(2) : "$" + Math.round(v).toLocaleString("en-US");
   let EXP = { eth: "https://etherscan.io" }, MAIN = "eth", CN = { eth: "Ethereum" }, CID = { eth: 1 };
   // addresses open on Arkham, which shows them on every chain at once; transactions stay on the chain's own explorer
   const exA = a => "https://intel.arkm.com/explorer/address/" + encodeURIComponent(a), exT = (h, c) => (EXP[c || MAIN] || EXP.eth) + "/tx/" + h;
@@ -44,7 +44,13 @@
     const el = $(id); if (!el) return;
     if (charts[id]) charts[id].dispose();
     const ch = charts[id] = echarts.init(el, null, { renderer: "canvas" });
-    ch.setOption(Object.assign({}, base, opt));
+    try { ch.setOption(Object.assign({}, base, opt)); }
+    catch (err) {
+      console.warn("chart " + id + " could not draw:", err);
+      ch.dispose(); delete charts[id];
+      el.innerHTML = `<p style="color:${C.dim};padding:20px 4px;margin:0">This chart could not be drawn for this data.</p>`;
+      return { on() { return this; } };
+    }
     return ch;
   }
   function empty(id, text) { const el = $(id); if (charts[id]) { charts[id].dispose(); delete charts[id]; } el.innerHTML = `<p style="color:${C.dim};padding:20px 4px;margin:0">${esc(text)}</p>`; }
@@ -340,22 +346,37 @@
       $("poison-note").innerHTML = `<b>Address poisoning.</b> These transfers were faked to put a look-alike address into this wallet's history. The fake starts and ends like an address you really use. Nothing was stolen by them; the danger is copying the wrong one later.`;
       $("poison-table").innerHTML = `<div class="tw"><table><tr><th>Address you really use</th><th>Look-alike planted</th><th>Chain</th><th class="n">Times</th><th>Fake token</th></tr>` + po.map(x => `<tr><td>${aLink(x.real, x.real.slice(0, 8) + "…" + x.real.slice(-6), x.chains[0])}</td><td>${aLink(x.fake, x.fake.slice(0, 8) + "…" + x.fake.slice(-6), x.chains[0])}</td><td>${x.chains.map(chip).join(" ")}</td><td class="n">${x.count}</td><td>${esc(x.assets.join(", "))}</td></tr>`).join("") + `</table></div>`;
     }
+    $("c-sweeps").closest("figure").hidden = !!ks; // a key sweep is drawn on the minute-by-minute chart below
+    if (!i && ks) {
+      const items = ks.items.map(x => ({ ...x, a: x.a + " · " + (CN[x.c] || x.c) }));
+      n.className = "note bad";
+      n.innerHTML = `<b>${when(ks.first)} UTC</b> · ${ks.count} transfer${ks.count > 1 ? "s" : ""} on ${ks.chains.map(chip).join(" ")}, about <b>${usd(items.reduce((a, x) => a + (x.u || 0), 0))}</b> at today's prices, all to ${aLink(ks.address)}. ${ks.pulled ? "Sent by someone else's transactions." : "Signed with this wallet's own key."}`;
+      drawNight(items, ks.chains[0]);
+      $("inc-table").innerHTML = "";
+      return;
+    }
     if (!i) { n.className = "note"; n.textContent = sw ? "No single big drain on top of the sweeping above." : "No drain found in the transfers read. A drain usually looks like several different assets leaving for one address within an hour."; ["c-timeline", "c-taken", "c-cum"].forEach(id => empty(id, "Nothing to show.")); $("inc-table").innerHTML = ""; return; }
     n.className = "note bad";
     n.innerHTML = `<b>${when(i.start)} UTC</b> · ${i.assetCount} assets, ${i.transferCount} transfers, about <b>${usd(i.usd)}</b> at today's prices, all sent to ${aLink(i.to, i.receiverName, i.chain)} on ${chip(i.chain)}. ` +
       (i.method === "key" ? "Signed with this wallet's own key." : `Sent by another address (${i.signers.map(s => aLink(s, null, i.chain)).join(", ")}), using a permission this wallet had given.`);
+    drawNight(i.items, i.chain);
     const items = i.items.slice().sort((a, b) => a.ts - b.ts);
-    draw("c-timeline", { grid: { left: 60, right: 20, top: 20, bottom: 40 }, tooltip: { ...base.tooltip, formatter: p => `${when(p.data[0] / 1000)}<br>${esc(p.data[2])}: ${p.data[3]}<br>${usd(p.data[1])}` },
-      xAxis: { type: "time", ...axis }, yAxis: { type: "value", name: "USD", ...axis },
-      series: [{ type: "scatter", symbolSize: v => 10 + Math.min(34, Math.sqrt(v[1]) / 3), itemStyle: { color: C.blood, opacity: .85 }, data: items.map(x => [x.ts * 1000, x.u, x.a, x.v, x.h]) }] })
-      .on("click", p => open(exT(p.data[4], i.chain), "_blank"));
-    const by = {}; items.forEach(x => by[x.a] = (by[x.a] || 0) + x.u);
-    draw("c-taken", { tooltip: { ...base.tooltip, formatter: p => `${esc(p.name)}: ${usd(p.value)}` }, series: [{ type: "pie", radius: ["42%", "70%"], label: { color: C.ink }, data: Object.keys(by).map(k => ({ name: k, value: Math.round(by[k]) })) }] });
-    let run = 0;
-    draw("c-cum", { grid: { left: 60, right: 20, top: 20, bottom: 40 }, tooltip: { ...base.tooltip, trigger: "axis" }, xAxis: { type: "time", ...axis }, yAxis: { type: "value", ...axis },
-      series: [{ type: "line", step: "end", showSymbol: false, lineStyle: { color: C.blood, width: 2 }, areaStyle: { color: "rgba(200,70,59,.25)" }, data: items.map(x => [x.ts * 1000, Math.round(run += x.u)]) }] });
     $("inc-table").innerHTML = `<div class="tw"><table><tr><th>Time (UTC)</th><th>Asset</th><th class="n">Amount</th><th class="n">USD today</th><th>Transaction</th></tr>` +
       items.map(x => `<tr><td>${when(x.ts)}</td><td>${esc(x.a)}</td><td class="n">${Number(x.v).toLocaleString("en-US", { maximumFractionDigits: 4 })}</td><td class="n">${usd(x.u)}</td><td><a href="${exT(x.h, i.chain)}" target="_blank" rel="noopener">${short(x.h)}</a></td></tr>`).join("") + `</table></div>`;
+  }
+
+  // the three pictures of one night: each transfer in time, what was taken, and the running total
+  function drawNight(list, chain) {
+    const items = list.slice().sort((a, b) => a.ts - b.ts);
+    draw("c-timeline", { grid: { left: 60, right: 20, top: 20, bottom: 40 }, tooltip: { ...base.tooltip, formatter: p => `${when(p.data[0] / 1000)}<br>${esc(p.data[2])}: ${p.data[3]}<br>${usd(p.data[1])}` },
+      xAxis: { type: "time", ...axis }, yAxis: { type: "value", name: "USD", ...axis },
+      series: [{ type: "scatter", symbolSize: v => 10 + Math.min(34, Math.sqrt(v[1]) / 3), itemStyle: { color: C.blood, opacity: .85 }, data: items.map(x => [x.ts * 1000, Math.max(x.u || 0, 0.01), x.a, x.v, x.h, x.c || chain]) }] })
+      .on("click", p => open(exT(p.data[4], p.data[5]), "_blank"));
+    const by = {}; items.forEach(x => by[x.a] = (by[x.a] || 0) + x.u);
+    draw("c-taken", { tooltip: { ...base.tooltip, formatter: p => `${esc(p.name)}: ${usd(p.value)}` }, series: [{ type: "pie", radius: ["42%", "70%"], label: { color: C.ink }, data: Object.keys(by).map(k => ({ name: k, value: Math.round(by[k] * 100) / 100 })) }] });
+    let run = 0;
+    draw("c-cum", { grid: { left: 60, right: 20, top: 20, bottom: 40 }, tooltip: { ...base.tooltip, trigger: "axis" }, xAxis: { type: "time", ...axis }, yAxis: { type: "value", ...axis },
+      series: [{ type: "line", step: "end", showSymbol: false, lineStyle: { color: C.blood, width: 2 }, areaStyle: { color: "rgba(200,70,59,.25)" }, data: items.map(x => [x.ts * 1000, Math.round((run += x.u || 0) * 100) / 100]) }] });
   }
 
   // Follow the money to the end: from every starting chain, across bridges (resolved by the server), and on from every loose end,
@@ -428,16 +449,22 @@
     if (!T.links.length) { ["c-sankey", "c-graph", "c-funnel", "c-tree"].forEach(id => empty(id, "Nothing has moved yet.")); return; }
     const byId = {}; T.nodes.forEach(x => byId[x.id] = x);
     const nm = x => (x.name || short(x.id)) + (x.kind === "start" ? " (start)" : "");
-    const fwd = T.links.filter(l => byId[l.source].hop < byId[l.target].hop);
-    draw("c-sankey", { tooltip: { ...base.tooltip, formatter: p => p.dataType === "edge" ? `${esc(p.data.source)} → ${esc(p.data.target)}<br>${usd(p.data.real)} · ${p.data.count} transfers` : esc(p.name) },
-      series: [{ type: "sankey", left: 10, right: 150, nodeGap: 12, emphasis: { focus: "adjacency" }, lineStyle: { color: "source", opacity: .35 }, label: { color: C.ink, fontSize: 11 },
-        data: T.nodes.map(x => ({ name: nm(x), itemStyle: { color: KIND[x.kind] }, addr: x.id })), links: fwd.map(l => ({ source: nm(byId[l.source]), target: nm(byId[l.target]), value: Math.max(l.usd, 1), real: l.usd, count: l.count })) }] })
+    // the pictures show people and services, not the DEX contracts swaps pass through, and only the biggest flows, so they stay readable
+    const shown = l => byId[l.source].kind !== "contract" && byId[l.target].kind !== "contract";
+    const fwd = T.links.filter(l => shown(l) && byId[l.source].hop < byId[l.target].hop).sort((a, b) => b.usd - a.usd).slice(0, 45);
+    const board = T.links.filter(shown).sort((a, b) => b.usd - a.usd).slice(0, 90), boardIds = new Set(board.flatMap(l => [l.source, l.target]).concat(T.start));
+    $("c-sankey").style.height = Math.min(900, Math.max(380, new Set(fwd.flatMap(l => [l.source, l.target])).size * 16)) + "px";
+    // two addresses can share a label ("Tornado.Cash: Router", or the same short form), so nodes are keyed by address
+    const flowIds = new Set(fwd.flatMap(l => [l.source, l.target]));
+    draw("c-sankey", { tooltip: { ...base.tooltip, formatter: p => p.dataType === "edge" ? `${esc(nm(byId[p.data.source]))} → ${esc(nm(byId[p.data.target]))}<br>${usd(p.data.real)} · ${p.data.count} transfers` : esc(nm(byId[p.name])) + "<br>" + esc(p.name) },
+      series: [{ type: "sankey", left: 10, right: 150, nodeGap: 12, emphasis: { focus: "adjacency" }, lineStyle: { color: "source", opacity: .35 }, label: { color: C.ink, fontSize: 11, formatter: p => nm(byId[p.name]) },
+        data: T.nodes.filter(x => flowIds.has(x.id)).map(x => ({ name: x.id, itemStyle: { color: KIND[x.kind] }, addr: x.id })), links: fwd.map(l => ({ source: l.source, target: l.target, value: Math.max(l.usd, 1), real: l.usd, count: l.count })) }] })
       .on("click", p => p.dataType === "node" && open(exA(p.data.addr), "_blank"));
-    const kinds = [...new Set(T.nodes.map(x => x.kind))];
+    const kinds = [...new Set(T.nodes.filter(x => boardIds.has(x.id)).map(x => x.kind))];
     draw("c-graph", { legend: { data: kinds.map(k => KNAME[k] || k), textStyle: { color: C.dim }, bottom: 0 }, tooltip: { ...base.tooltip, formatter: p => p.dataType === "node" ? `${esc(p.data.label)}<br>${esc(p.data.id)}<br>received ${usd(p.data.usd)}` : `${usd(p.data.usd)} · ${p.data.count} transfers<br>${esc(p.data.assets.join(", "))}` },
       series: [{ type: "graph", layout: "force", roam: true, draggable: true, force: { repulsion: 260, edgeLength: [70, 170] }, edgeSymbol: ["none", "arrow"], edgeSymbolSize: 7, label: { show: true, color: C.ink, fontSize: 10, position: "right", formatter: p => p.data.label },
         categories: kinds.map(k => ({ name: KNAME[k] || k, itemStyle: { color: KIND[k] } })), lineStyle: { color: "#59606a", width: 1.2, curveness: .12 },
-        data: T.nodes.map(x => ({ id: x.id, name: x.id, label: x.name || short(x.id), usd: x.usd, category: kinds.indexOf(x.kind), symbolSize: x.kind === "start" ? 30 : 12 + Math.min(26, Math.sqrt(x.usd) / 6) })), links: T.links.map(l => ({ source: l.source, target: l.target, usd: l.usd, count: l.count, assets: l.assets })) }] })
+        data: T.nodes.filter(x => boardIds.has(x.id)).map(x => ({ id: x.id, name: x.id, label: x.name || short(x.id), usd: x.usd, category: kinds.indexOf(x.kind), symbolSize: x.kind === "start" ? 30 : 12 + Math.min(26, Math.sqrt(x.usd) / 6) })), links: board.map(l => ({ source: l.source, target: l.target, usd: l.usd, count: l.count, assets: l.assets })) }] })
       .on("click", p => p.dataType === "node" && open(exA(p.data.id), "_blank"));
     // every stage is a part of the one before it, so the funnel can only narrow
     const first = T.links.filter(l => l.source === T.start), tot = l => Math.round(l.reduce((a, x) => a + x.usd, 0));

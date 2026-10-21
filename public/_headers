@@ -1,0 +1,7 @@
+# The page, its scripts and styles change together: always revalidate, so a browser never mixes an old page with new code.
+/*
+  Cache-Control: no-cache
+/labels/*
+  Cache-Control: public, max-age=86400
+/sfx/*
+  Cache-Control: public, max-age=86400

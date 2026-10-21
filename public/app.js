@@ -1,6 +1,7 @@
 // LastSeenIMD client. Calls /api/scan and /api/trace, tells the story as messages, draws the charts.
 (function () {
-  const $ = id => document.getElementById(id);
+  // a missing element (an old cached copy of the page) must never stop a scan: writes to it go nowhere
+  const $ = id => document.getElementById(id) || Object.assign(document.createElement("div"), { id });
   const C = { ink: "#d6d8cf", dim: "#8a9087", line: "#232a31", lamp: "#e9d37c", blood: "#c8463b", moss: "#7fb08a", cold: "#7fa3c7", violet: "#a48bd1", sand: "#c9a36b" };
   const KIND = { exchange: C.cold, mixer: C.blood, bad: C.blood, sanctioned: C.blood, bridge: C.moss, swap: C.moss, unknown: C.dim, other: C.sand, start: C.lamp, poison: C.violet, deposit: C.cold, solana: C.violet, offsite: C.sand, contract: "#5d6670" };
   const KNAME = { exchange: "Exchange", mixer: "Mixer", bad: "Flagged", sanctioned: "Sanctioned", bridge: "Bridge", swap: "Swap / DEX", unknown: "No label", other: "Known contract", start: "Start", poison: "Look-alike (poisoning)", deposit: "Deposit address", solana: "Bridged to Solana", offsite: "On another chain", contract: "Contract (DEX or protocol)" };

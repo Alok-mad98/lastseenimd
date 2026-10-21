@@ -78,7 +78,14 @@ export async function onRequestGet(ctx) {
 }
 
 // Where a bridge deposit paid out. Each service is asked in turn; the first that knows the transaction answers.
+// whatever the bridges say is untrusted: only a real address or transaction hash gets through
+const cleanAddr = a => { const v = String(a || ""); return /^0x[0-9a-fA-F]{40}$/.test(v) ? v.toLowerCase() : /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(v) ? v : null; };
+const cleanHash = h => { const v = String(h || ""); return /^0x[0-9a-fA-F]{64}$/.test(v) || /^[1-9A-HJ-NP-Za-km-z]{64,90}$/.test(v) ? v : null; };
 async function resolveBridge(chain, hash) {
+  const r = await askBridges(chain, hash);
+  return r && { tool: String(r.tool).replace(/[^\w .()-]/g, "").slice(0, 40), status: String(r.status || "").replace(/\W/g, "").slice(0, 20), toChainId: Number(r.toChainId) || null, toChain: r.toChain, recipient: cleanAddr(r.recipient), outHash: cleanHash(r.outHash) };
+}
+async function askBridges(chain, hash) {
   const get = u => fetch(u, { headers: { accept: "application/json" } }).then(r => r.ok ? r.json() : null).catch(() => null);
   const keyOf = id => SOLANA_IDS.includes(Number(id)) ? "solana" : (CHAINS.find(c => c.id === Number(id)) || {}).key || null;
   const relay = await get("https://api.relay.link/requests/v2?hash=" + hash);

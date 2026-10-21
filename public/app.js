@@ -9,9 +9,9 @@
   const usd = v => v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e4 ? "$" + Math.round(v / 1e3) + "k" : "$" + Math.round(v).toLocaleString("en-US");
   let EXP = { eth: "https://etherscan.io" }, MAIN = "eth", CN = { eth: "Ethereum" }, CID = { eth: 1 };
   // addresses open on Arkham, which shows them on every chain at once; transactions stay on the chain's own explorer
-  const exA = a => "https://intel.arkm.com/explorer/address/" + a, exT = (h, c) => (EXP[c || MAIN] || EXP.eth) + "/tx/" + h;
+  const exA = a => "https://intel.arkm.com/explorer/address/" + encodeURIComponent(a), exT = (h, c) => (EXP[c || MAIN] || EXP.eth) + "/tx/" + h;
   const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  const aLink = (a, name, c) => `<a href="${exA(a, c)}" target="_blank" rel="noopener" title="${a}">${esc(name || short(a))}</a>`;
+  const aLink = (a, name, c) => `<a href="${esc(exA(a, c))}" target="_blank" rel="noopener" title="${esc(a)}">${esc(name || short(a))}</a>`;
   const when = ts => new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 16);
   const charts = {};
   let D = null, T = null, tapeTimer = null, curTab = "overview";
@@ -434,7 +434,7 @@
         data: T.nodes.map(x => ({ name: nm(x), itemStyle: { color: KIND[x.kind] }, addr: x.id })), links: fwd.map(l => ({ source: nm(byId[l.source]), target: nm(byId[l.target]), value: Math.max(l.usd, 1), real: l.usd, count: l.count })) }] })
       .on("click", p => p.dataType === "node" && open(exA(p.data.addr), "_blank"));
     const kinds = [...new Set(T.nodes.map(x => x.kind))];
-    draw("c-graph", { legend: { data: kinds.map(k => KNAME[k] || k), textStyle: { color: C.dim }, bottom: 0 }, tooltip: { ...base.tooltip, formatter: p => p.dataType === "node" ? `${esc(p.data.label)}<br>${p.data.id}<br>received ${usd(p.data.usd)}` : `${usd(p.data.usd)} · ${p.data.count} transfers<br>${esc(p.data.assets.join(", "))}` },
+    draw("c-graph", { legend: { data: kinds.map(k => KNAME[k] || k), textStyle: { color: C.dim }, bottom: 0 }, tooltip: { ...base.tooltip, formatter: p => p.dataType === "node" ? `${esc(p.data.label)}<br>${esc(p.data.id)}<br>received ${usd(p.data.usd)}` : `${usd(p.data.usd)} · ${p.data.count} transfers<br>${esc(p.data.assets.join(", "))}` },
       series: [{ type: "graph", layout: "force", roam: true, draggable: true, force: { repulsion: 260, edgeLength: [70, 170] }, edgeSymbol: ["none", "arrow"], edgeSymbolSize: 7, label: { show: true, color: C.ink, fontSize: 10, position: "right", formatter: p => p.data.label },
         categories: kinds.map(k => ({ name: KNAME[k] || k, itemStyle: { color: KIND[k] } })), lineStyle: { color: "#59606a", width: 1.2, curveness: .12 },
         data: T.nodes.map(x => ({ id: x.id, name: x.id, label: x.name || short(x.id), usd: x.usd, category: kinds.indexOf(x.kind), symbolSize: x.kind === "start" ? 30 : 12 + Math.min(26, Math.sqrt(x.usd) / 6) })), links: T.links.map(l => ({ source: l.source, target: l.target, usd: l.usd, count: l.count, assets: l.assets })) }] })
@@ -445,7 +445,7 @@
     draw("c-funnel", { tooltip: { ...base.tooltip, formatter: p => `${p.name}: ${usd(p.value)}` }, series: [{ type: "funnel", left: "8%", right: "8%", top: 10, bottom: 10, sort: "none", gap: 3, minSize: "18%", label: { color: "#111", position: "inside", formatter: p => p.name + String.fromCharCode(10) + usd(p.value) },
       data: [{ name: "Sent on by this address", value: tot(first), itemStyle: { color: C.lamp } }, { name: "…to a labelled service", value: tot(known), itemStyle: { color: C.sand } }, { name: "…to an exchange, mixer or bridge", value: tot(out), itemStyle: { color: C.cold } }] }] });
     const kids = id => fwd.filter(l => l.source === id).map(l => ({ name: byId[l.target].name || short(l.target), addr: l.target, itemStyle: { color: KIND[byId[l.target].kind] }, children: kids(l.target) }));
-    draw("c-tree", { tooltip: { ...base.tooltip, formatter: p => esc(p.name) + (p.data.addr ? "<br>" + p.data.addr : "") }, series: [{ type: "tree", data: [{ name: short(T.start), addr: T.start, itemStyle: { color: C.lamp }, children: kids(T.start) }], left: 70, right: 130, top: 10, bottom: 10, symbolSize: 9, initialTreeDepth: 3, label: { color: C.ink, fontSize: 10, position: "left" }, leaves: { label: { position: "right" } }, lineStyle: { color: "#3b434c" } }] })
+    draw("c-tree", { tooltip: { ...base.tooltip, formatter: p => esc(p.name) + (p.data.addr ? "<br>" + esc(p.data.addr) : "") }, series: [{ type: "tree", data: [{ name: short(T.start), addr: T.start, itemStyle: { color: C.lamp }, children: kids(T.start) }], left: 70, right: 130, top: 10, bottom: 10, symbolSize: 9, initialTreeDepth: 3, label: { color: C.ink, fontSize: 10, position: "left" }, leaves: { label: { position: "right" } }, lineStyle: { color: "#3b434c" } }] })
       .on("click", p => p.data.addr && open(exA(p.data.addr, tc), "_blank"));
   }
 

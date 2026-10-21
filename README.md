@@ -4,7 +4,7 @@
 
 # LastSeenIMD — See What Happened to Your Wallet
 
-**A free, beginner-first wallet forensics tool. Paste an address: it finds stolen keys, sweepers and drains across 28 EVM chains and Solana, follows the money, and explains it all in plain words.**
+**A free, beginner-first wallet forensics tool. Paste an address: it finds stolen keys, sweepers and drains across 48 EVM chains and Solana, follows the money, and explains it all in plain words.**
 
 *Every theft leaves a trail. Most victims just never get shown it.*
 
@@ -59,7 +59,7 @@ What those people get instead is a block explorer they cannot read, and a strang
 
 LastSeenIMD is the friend who can read the explorer. You paste a wallet address and it:
 
-1. **Checks 28 EVM chains and Solana** to find every place the wallet has been used
+1. **Checks 48 EVM chains and Solana** to find every place the wallet has been used
 2. **Looks for the fingerprints of a stolen key** — someone else signing transactions that move your money
 3. **Follows the money** two hops deep, and names the exchange where it was cashed out
 4. **Tells you, in plain words**, what happened, how sure it is, and what to do now
@@ -84,7 +84,7 @@ The first wallet tested was the author's own: **`0xc652…f2d3`**, which kept lo
 | Finding | What the chain shows |
 |---------|----------------------|
 | **Verdict** | **COMPROMISED — 97/100** |
-| Chains checked | 28 EVM chains (15 with activity, all 15 read in full) |
+| Chains checked | 48 EVM chains (15 with activity, all 15 read in full) |
 | Sweeper | `0xef94…28a5` — **9 transfers** taken on **Base, Optimism, Polygon, Soneium and HyperEVM** |
 | How it took them | It sent the transactions itself ("the receiver" signed), one of them an **EIP-7702 transaction** carrying authorizations only this wallet's key can sign |
 | Delegations | The wallet is delegated to an **unrecognised contract on 5 chains — a different one on each** |
@@ -102,7 +102,7 @@ Every rule below is implemented in [`functions/api/`](functions/api/). Under eac
 
 ### Step 1 — Find where the wallet lives (`discover.js`)
 
-One small batched request per chain (nonce, balance, code) across **28 EVM chains**. Every chain the wallet has used is then read in full, up to 10 per request with several requests in parallel; all 28 are shown on screen with their status, and every address opens on Arkham's multi-chain explorer. Delegated chains are always read first.
+One small batched request per chain (nonce, balance, code) across **48 EVM chains**. Every chain the wallet has used is then read in full, up to 10 per request with several requests in parallel; all 48 are shown on screen with their status, and every address opens on Arkham's multi-chain explorer. Delegated chains are always read first.
 
 *Plain English: before looking at what happened, find every neighbourhood the wallet has lived in.*
 
@@ -125,6 +125,24 @@ For the latest outgoing transactions on each chain, read who actually signed the
 
 Group every counterparty by its first 4 and last 4 hex characters. Two different addresses with the same ends, where one carries almost no value, means a look-alike was planted in the history.
 
+### The drain checklist
+
+Every scan runs a named check for each way wallets are emptied, and the page shows all of them, found or clear:
+
+| Check | What it looks for |
+|---|---|
+| Sweeper bot | the attacker's own address pulling funds out, often seconds after anything arrives |
+| Emptied with the stolen key | several assets, or the same coin on several chains, going to one new address within hours, at the end of the wallet's activity (`public/detect.js`) |
+| Malicious EIP-7702 delegation | the wallet set to run a contract nobody recognises |
+| Taken by someone else's transaction | tokens moved by another address's transaction: approve, permit, Permit2, setApprovalForAll, or a malicious delegate |
+| Drainer burst | three or more assets to one address within an hour |
+| Sent to a poisoned look-alike | real money paid to an address that first appeared through a fake transfer |
+| Address poisoning attempts | look-alike addresses planted in the history |
+| Dangerous permissions still open | flagged or closed-source spenders (GoPlus) |
+| Paid a flagged address | receivers labelled as scam, mixer or sanctioned |
+
+Discovery also counts chains where the wallet only *received* tokens (nonce 0, empty now), which a drainer can still have emptied.
+
 ### Step 4b — The key sweep (`findKeySweep`)
 
 A thief who holds the private key signs ordinary transactions as the wallet, so the signer test sees the owner. The giveaway is the sweep: the native coin on **two or more chains** going to **one address the wallet never paid before**, within 12 hours, at the end of its activity on each chain. On its own that could be the owner moving to a new wallet, so it also needs a second sign: an unknown delegation, the older **legacy transaction format** the owner does not normally use (scripts send it, wallet apps do not), or three or more chains.
@@ -144,11 +162,11 @@ score = max(score, floor[compromise level])        floors: confirmed 97 · likel
 
 Each part is 0–100 and shown on a radar chart, so a user can see *why* the number is what it is.
 
-### Step 7 — Follow the money (`trace.js`)
+### Step 7 — Follow the money to the end (`trace.js` + the page)
 
-Two hops out from the sweeper (or the drain receiver), keeping the largest edges, labelled with **104,212 known addresses** (exchanges, bridges, mixers, sanctioned and flagged addresses — built from the MIT-licensed [eth-labels](https://github.com/dawsbot/eth-labels) dataset plus Relay, LI.FI and major exchange hot wallets).
+The trail starts on every chain the theft touched and goes up to three hops per request, stopping at exchanges, exchange deposit addresses, mixers and contracts (DEX pools and routers are not people). Money that enters a bridge is resolved to the chain and address it came out on, through the public APIs of **Relay**, **LI.FI** and **Across**, and the page carries on there. Loose ends are followed in further rounds (up to 14 requests). The page ends with **"Where the money ended"**: each exchange deposit, mixer, bridge crossing, address where the money is still sitting, and branch not followed, with what to do about it.
 
-**Exchange deposit detection:** an unlabelled address that forwards ≥70% of its transfers to one exchange is that exchange's deposit address for somebody's account. That is the evidence police and exchanges act on.
+On the second real victim, the trail from the thief's address reaches an **OKX deposit address on BNB Chain** and **Tornado Cash**, across Across and LI.FI crossings.
 
 ### Step 8 — Solana (`sol.js`)
 
@@ -388,7 +406,7 @@ The Alchemy key needs the networks you want enabled in the Alchemy dashboard; ch
 | **11 Oct** | A real compromised wallet scored 0 → rebuilt as multi-chain signer forensics: sweepers, 7702 delegations, poisoning (scored 97). GLM 5.3 + SubQ, contract audits, Privy, sound, opening card, 28-chain discovery, revoke, deposit-address detection |
 | **11 Oct** | Launch film: Blender shots, HyperFrames composition, scored soundtrack, logo |
 | **14 Oct** | LastSeenRegistry (swarm verdicts + hop-by-hop bounties, 13 tests, question accepted by IMD's checker), Solana scan, X/ENS/Farcaster lookups, rate limits, the man on the title screen |
-| **21 Oct** | The key sweep: a second real victim went from 60 to 97 |
+| **21 Oct** | The key sweep (a second real victim went from 60 to 97), the drain checklist, 48 chains and token-only discovery, the trail to the end across bridges |
 | **21 Oct** | The hunt (prepaid swarm checks, staked leads, page leads, sealed anonymous tips), the audit desk (pasted Solidity + paid swarm audit), every active chain read, Arkham links, 20 tests |
 
 ---
@@ -409,7 +427,7 @@ The Alchemy key needs the networks you want enabled in the Alchemy dashboard; ch
 
 ## Tech Stack
 
-Vanilla JavaScript · Three.js · ECharts · Web Audio API · Cloudflare Pages + Pages Functions + Workers AI (GLM 5.3) · SubQ Decisions API · Alchemy (28 EVM chains + Solana) · DefiLlama · GoPlus · Sourcify · OpenChain · Monid (TikHub X search) · web3.bio · Privy (React, esbuild) · Solidity 0.8 + Foundry + OpenZeppelin 5.4 · IdentityMD oracle (Intake, EIP-712 attestations) · Blender 5.2 · HyperFrames · ffmpeg · Pillow · NumPy
+Vanilla JavaScript · Three.js · ECharts · Web Audio API · Cloudflare Pages + Pages Functions + Workers AI (GLM 5.3) · SubQ Decisions API · Alchemy (48 EVM chains + Solana) · DefiLlama · GoPlus · Sourcify · OpenChain · Monid (TikHub X search) · web3.bio · Privy (React, esbuild) · Solidity 0.8 + Foundry + OpenZeppelin 5.4 · IdentityMD oracle (Intake, EIP-712 attestations) · Blender 5.2 · HyperFrames · ffmpeg · Pillow · NumPy
 
 ---
 

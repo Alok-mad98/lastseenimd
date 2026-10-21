@@ -34,7 +34,7 @@
     <button class="ghost" type="button" data-desk="1">AUDIT A CONTRACT</button>
     <button class="ghost" type="button" data-board="1">BOUNTY BOARD</button>
   </nav>
-  <p class="fine">Free. Checks 28 EVM chains and Solana, and reads the ones this wallet has used. No wallet connection needed to look. This traces and explains; it does not recover funds, and nobody who promises recovery in your DMs can either.</p>
+  <p class="fine">Free. Checks 48 EVM chains and Solana, and reads the ones this wallet has used. No wallet connection needed to look. This traces and explains; it does not recover funds, and nobody who promises recovery in your DMs can either.</p>
 </main>
 
 <main id="case" class="case" hidden>
@@ -74,6 +74,7 @@
 
       <div class="pane" id="p-overview">
         <div class="stats" id="stats"></div>
+        <div id="checks"></div>
         <div id="chains"></div>
         <div id="swarm" class="swarm" hidden></div>
         <figure id="ai-box">
@@ -119,6 +120,7 @@
 
       <div class="pane" id="p-trail" hidden>
         <p class="note" id="trail-note"></p>
+        <div id="trail-ends"></div>
         <figure><figcaption>Follow the money</figcaption><div class="ch tall" id="c-sankey"></div></figure>
         <figure><figcaption>Evidence board · drag the pins, click one to open it on Arkham</figcaption><div class="ch xtall" id="c-graph"></div></figure>
         <div class="two">
@@ -185,6 +187,7 @@
 <script src="sound.js"></script>
 <script type="module" src="privy.bundle.js"></script>
 <script type="module" src="scene.js"></script>
+<script type="module" src="detect.js"></script>
 <script src="app.js"></script>
 <script src="hunt.js"></script>
 </body>

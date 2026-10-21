@@ -1,7 +1,7 @@
 // Per-visitor limits on the API, so one script cannot spend the project's Alchemy, AI and search budgets.
 // Counts live in the edge cache per IP and minute. They are approximate (the cache is per data centre and not atomic),
 // which is enough to stop a loop without getting in the way of a person clicking around.
-const LIMITS = { scan: 12, discover: 12, sol: 12, trace: 20, ai: 4, audit: 4, mentions: 8, registry: 60, tips: 10 };
+const LIMITS = { scan: 15, discover: 24, sol: 12, trace: 30, ai: 4, audit: 4, mentions: 8, registry: 60, tips: 10 };
 
 export async function onRequest(ctx) {
   const { request, next } = ctx;

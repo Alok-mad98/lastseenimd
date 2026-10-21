@@ -2,8 +2,8 @@
 (function () {
   const $ = id => document.getElementById(id);
   const C = { ink: "#d6d8cf", dim: "#8a9087", line: "#232a31", lamp: "#e9d37c", blood: "#c8463b", moss: "#7fb08a", cold: "#7fa3c7", violet: "#a48bd1", sand: "#c9a36b" };
-  const KIND = { exchange: C.cold, mixer: C.blood, bad: C.blood, sanctioned: C.blood, bridge: C.moss, swap: C.moss, unknown: C.dim, other: C.sand, start: C.lamp, poison: C.violet, deposit: C.cold };
-  const KNAME = { exchange: "Exchange", mixer: "Mixer", bad: "Flagged", sanctioned: "Sanctioned", bridge: "Bridge", swap: "Swap / DEX", unknown: "No label", other: "Known contract", start: "Start", poison: "Look-alike (poisoning)", deposit: "Exchange deposit address" };
+  const KIND = { exchange: C.cold, mixer: C.blood, bad: C.blood, sanctioned: C.blood, bridge: C.moss, swap: C.moss, unknown: C.dim, other: C.sand, start: C.lamp, poison: C.violet, deposit: C.cold, solana: C.violet, offsite: C.sand, contract: "#5d6670" };
+  const KNAME = { exchange: "Exchange", mixer: "Mixer", bad: "Flagged", sanctioned: "Sanctioned", bridge: "Bridge", swap: "Swap / DEX", unknown: "No label", other: "Known contract", start: "Start", poison: "Look-alike (poisoning)", deposit: "Exchange deposit address", solana: "Bridged to Solana", offsite: "On another chain", contract: "Contract (DEX or protocol)" };
   const PAL = [C.lamp, C.cold, C.moss, C.blood, C.violet, C.sand, "#9aa7b1", "#d98f6c"];
   const short = a => a ? a.slice(0, 6) + "…" + a.slice(-4) : "";
   const usd = v => v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e4 ? "$" + Math.round(v / 1e3) + "k" : "$" + Math.round(v).toLocaleString("en-US");
@@ -72,17 +72,21 @@
     const intro = opening(address); if (window.SCENE) SCENE.approach();
     $("load").hidden = false; $("loadt").textContent = "REWINDING THE TAPE…"; snd("tape");
     try {
-      $("loadt").textContent = "CHECKING 28 CHAINS…";
-      const disc = await (await fetch("/api/discover?address=" + address)).json();
-      if (disc.error) throw new Error(disc.error);
+      $("loadt").textContent = "CHECKING EVERY CHAIN…";
+      // half the chains per request keeps each one inside the host's limits
+      const halves = await Promise.all(["0", "1"].map(k => fetch("/api/discover?part=" + k + "&address=" + address).then(r => r.json())));
+      const bad = halves.find(h => h.error); if (bad) throw new Error(bad.error);
+      const dchains = halves[0].chains.concat(halves[1].chains);
+      const disc = { chains: dchains, active: dchains.filter(r => r.ok && (r.txCount > 0 || r.balance > 0 || r.delegate || r.isContract || r.received)).sort((a, b) => (!!b.delegate - !!a.delegate) || b.txCount - a.txCount).map(r => r.key) };
       // every chain the wallet has used is read; one request holds at most 10 (host limits), so busy wallets take several at once
-      const pick = disc.active.slice(0, 30), groups = [];
+      const pick = disc.active.slice(0, 50), groups = [];
       for (let i = 0; i < pick.length; i += 10) groups.push(pick.slice(i, i + 10));
       $("loadt").textContent = pick.length ? "REWINDING THE TAPE ON " + pick.length + " CHAIN" + (pick.length > 1 ? "S" : "") + "…" : "REWINDING THE TAPE…";
       const parts = await Promise.all((groups.length ? groups : [[]]).map((g, i) => fetch("/api/scan?address=" + address + (g.length ? "&chains=" + g.join(",") : "")).then(r => r.json()).catch(e => ({ error: e.message, extra: i > 0 }))));
       if (parts[0].error) throw new Error(parts[0].error);
       const d = parts.slice(1).filter(x => !x.error).reduce(merge, parts[0]);
-      d.allChains = disc.chains; d.skipped = disc.active.slice(30).concat(groups.slice(1).filter((g, i) => parts[i + 1].error).flat()); d.contractOn = disc.chains.filter(c => c.isContract).map(c => c.key);
+      if (parts.length > 1) crossCheck(d);
+      d.allChains = disc.chains; d.skipped = disc.active.slice(50).concat(groups.slice(1).filter((g, i) => parts[i + 1].error).flat()); d.contractOn = disc.chains.filter(c => c.isContract).map(c => c.key);
       await intro;
       D = d; T = null; rendered = {};
       EXP = {}; CN = {}; CID = {}; d.allChains.concat(d.chains).forEach(c => { EXP[c.key] = c.explorer; CN[c.key] = c.name; CID[c.key] = c.id; });
@@ -115,8 +119,12 @@
     if (!sw && sw2) { compromise.sweeper = sw2; compromise.keySweep = null; story = b.story; }
     else if (sw && sw2 && sw.address === sw2.address) compromise.sweeper = { ...sw, chains: [...new Set(sw.chains.concat(sw2.chains))], allChains: [...new Set(sw.allChains.concat(sw2.allChains))], totalCount: sw.totalCount + sw2.totalCount, totalUsd: sw.totalUsd + sw2.totalUsd, type4: sw.type4 || sw2.type4, swarmCase: sw.swarmCase || sw2.swarmCase };
     else if (sw && sw2) sweeps = a.sweeps; // a different sweeper elsewhere: the first one found leads the story
+    compromise.pull = (a.compromise.pull || []).concat(b.compromise.pull || []); compromise.poisonLoss = (a.compromise.poisonLoss || []).concat(b.compromise.poisonLoss || []);
+    const xa = a.cross, xb = b.cross, cross = xa && xb ? { tail: xa.tail.concat(xb.tail), seen: { ...xb.seen }, lastOn: { ...xa.lastOn, ...xb.lastOn }, strangeCount: xa.strangeCount + xb.strangeCount, typed: xa.typed + xb.typed, legacy: xa.legacy + xb.legacy } : xa || xb;
+    if (xa && xb) Object.entries(xa.seen).forEach(([k, v]) => cross.seen[k] = Math.min(v, cross.seen[k] || Infinity));
+    const checks = (a.checks || []).map(c => { const o = (b.checks || []).find(x => x.id === c.id) || {}; return { ...c, found: c.found || o.found ? true : c.found === null && o.found === null ? null : false, detail: c.detail || o.detail || null }; });
     const tA = a.totals, tB = b.totals;
-    return { ...a, chains: a.chains.concat(b.chains), compromise, sweeps, story,
+    return { ...a, chains: a.chains.concat(b.chains), compromise, sweeps, story, cross, checks,
       incident: a.incident || b.incident, risk: b.risk.score > a.risk.score ? b.risk : a.risk, flags: a.flags || b.flags,
       approvals: a.approvals || b.approvals ? (a.approvals || []).concat(b.approvals || []) : null, approvalsAvailable: a.approvalsAvailable || b.approvalsAvailable,
       balanceEth: a.balanceEth + b.balanceEth, txCount: a.txCount + b.txCount, sent: byAddr(a.sent.concat(b.sent)).slice(0, 40), received: byAddr(a.received.concat(b.received)).slice(0, 20),
@@ -126,6 +134,19 @@
       series: { months: Object.values(months).sort((x, y) => x.m < y.m ? -1 : 1), days, heat: a.series.heat.map((row, i) => row.map((v, j) => v + b.series.heat[i][j])) },
       tokensOut: Object.values(tok).sort((x, y) => y.usd - x.usd).slice(0, 12), endpoints: Object.values(end),
       transfers: a.transfers.concat(b.transfers).sort((x, y) => y.ts - x.ts).slice(0, 600) };
+  }
+
+  // After several scans are folded together, a key sweep can span chains that were read in different requests: look again.
+  function crossCheck(d) {
+    const c = d.compromise, x = d.cross;
+    if (c.sweeper || c.keySweep || !x || !window.DETECT) return;
+    const ks = DETECT.findKeySweep({ tail: x.tail, self: d.address, seen: x.seen, lastOn: x.lastOn, strangeCount: x.strangeCount, legacyShare: x.typed ? x.legacy / x.typed : 0 })
+      .find(k => !d.sent.some(s => s.address === k.address && ["exchange", "swap", "bridge", "other"].includes(s.kind)));
+    if (!ks) return;
+    c.keySweep = ks; c.level = x.strangeCount ? "confirmed" : "likely";
+    d.risk = { ...d.risk, score: Math.max(d.risk.score, x.strangeCount ? 97 : 85), level: "high" };
+    d.story = [`This wallet was emptied with its own key. On ${when(ks.first)} UTC, ${ks.units} assets on ${ks.chains.map(k => CN[k] || k).join(", ")} went to one new address ending ${ks.address.slice(-4)} within hours.`].concat(d.story);
+    const ck = (d.checks || []).find(k => k.id === "keysweep"); if (ck) { ck.found = true; ck.detail = `${ks.units} assets on ${ks.chains.length} chains went to ${ks.address} within hours`; }
   }
 
   // ---- the story, one message at a time ----
@@ -149,6 +170,8 @@
     v.hidden = false;
     if (sw) { v.className = "verdict"; v.innerHTML = `<h2>COMPROMISED</h2><p>${aLink(sw.address, null, sw.chains[0])} takes funds out of this wallet by itself${sw.type4 ? ", using signatures made with this wallet's private key" : ""}. ${sw.totalCount} transfers so far on ${sw.allChains.map(chip).join(" ")}. Anything you send here will be taken.</p>`; }
     else if (c.keySweep) { const k = c.keySweep; v.className = "verdict"; v.innerHTML = `<h2>DRAINED WITH YOUR KEY</h2><p>On ${when(k.first)} UTC the coins on ${k.chains.map(chip).join(" ")} went to ${aLink(k.address)}, a new address, within hours${k.legacy ? ", using a transaction format your wallet does not normally use" : ""}. They were signed with this wallet's key: someone else has it. Anything you send here can be taken.</p>`; }
+    else if (c.pull && c.pull.length) { const p = c.pull[0]; v.className = "verdict"; v.innerHTML = `<h2>TAKEN WITH A PERMISSION</h2><p>${p.count} transfer${p.count > 1 ? "s" : ""} of tokens left this wallet in transactions someone else sent, to ${aLink(p.to)} on ${p.chains.map(chip).join(" ")}, using ${esc(p.how.join(", "))}. ${p.how.every(h => h.includes("delegate")) ? "Whoever controls that delegate can move anything this wallet holds." : "This wallet once signed a permission and a drainer used it. Revoke everything under “Open doors” now."}</p>`; }
+    else if (c.poisonLoss && c.poisonLoss.length) { const p = c.poisonLoss[0]; v.className = "verdict"; v.innerHTML = `<h2>SENT TO A FAKE ADDRESS</h2><p>${usd(p.usd)} went to ${aLink(p.fake)}, a look-alike planted in this wallet's history to imitate ${aLink(p.real)}. Always check every character of an address.</p>`; }
     else if (c.level === "suspected") { v.className = "verdict warn"; v.innerHTML = `<h2>CHECK THIS</h2><p>The wallet is delegated to a contract I do not recognise on ${c.delegations.filter(x => !x.name).map(x => chip(x.chain)).join(" ")}. If you did not set that up, someone else controls the wallet.</p>`; }
     else if (d.incident) { v.className = "verdict warn"; v.innerHTML = `<h2>POSSIBLE DRAIN</h2><p>Several assets left for one address within an hour. See “The night it happened”.</p>`; }
     else { v.className = "verdict ok"; v.innerHTML = `<h2>NO THEFT FOUND</h2><p>No sweeper, no unknown delegation, no drain pattern on ${d.chains.filter(x => x.ok).length} chains. That is not a guarantee: I only read the most recent transfers.</p>`; }
@@ -272,6 +295,7 @@
       [d.risk.score + " / 100", "Risk score"], [d.balanceEth.toFixed(4) + " ETH", "ETH on all chains"], [usd(d.split.ownUsd), "Your swaps & bridges"], [usd(d.split.awayUsd), "Sent to other wallets"],
       [(d.totals.inCount + d.totals.outCount) + (d.totals.capped ? "+" : ""), "Transfers read"], [d.approvals ? d.approvals.length : "n/a", "Open permissions"]];
     $("stats").innerHTML = st.map(([v, k]) => `<div class="stat"><b>${esc(v)}</b><span>${k}</span></div>`).join("");
+    $("checks").innerHTML = d.checks ? `<figure><figcaption>Every way a wallet gets drained · what this scan found</figcaption><ul class="checks">${d.checks.map(c => `<li class="${c.found ? "hit" : c.found === null ? "na" : "clear"}"><b>${c.found ? "FOUND" : c.found === null ? "NOT CHECKED" : "CLEAR"}</b><span><i>${esc(c.name)}</i>${esc(c.found ? c.detail : c.how)}</span></li>`).join("")}</ul></figure>` : "";
     $("chains").innerHTML = `<div class="tw"><table><tr><th>Chain</th><th class="n">Out</th><th class="n">In</th><th class="n">Balance</th><th>Account type</th></tr>` + d.chains.map(c => !c.ok ? `<tr><td>${esc(c.name)}</td><td colspan="4">could not be read</td></tr>` :
       `<tr><td><a href="${exA(d.address, c.key)}" target="_blank" rel="noopener">${esc(c.name)}</a></td><td class="n">${c.outCount}${c.capped ? "+" : ""}</td><td class="n">${c.inCount}</td><td class="n">${c.balance.toFixed(5)} ${c.native}</td><td>${c.delegate ? (c.delegateName ? `<span class="tag swap">${esc(c.delegateName)}</span>` : `<span class="tag bad">delegated to unknown contract</span> ${aLink(c.delegate, null, c.key)}<button class="mini" type="button" data-audit="${c.key}:${c.delegate}:delegate">AUDIT</button>`) : c.isContract ? "contract" : "normal wallet"}</td></tr>`).join("") + `</table></div>` +
       `<p class="foot" style="margin:-6px 0 8px">All ${d.allChains.length} chains were checked for this address. The table above holds the ${d.chains.length} it has used, read in full; the rest have no transactions from it. Click any chain to open the address there on Arkham.</p>` +
@@ -297,10 +321,10 @@
 
   function incident() {
     const i = D.incident, n = $("inc-note"), sw = D.compromise.sweeper, po = D.compromise.poisoning;
-    const ks = !sw && D.compromise.keySweep;
+    const ks = !sw && (D.compromise.keySweep || (D.compromise.pull && D.compromise.pull[0] && { address: D.compromise.pull[0].to, chains: D.compromise.pull[0].chains, count: D.compromise.pull[0].count, first: D.compromise.pull[0].first, last: D.compromise.pull[0].last, items: D.compromise.pull[0].items, pulled: D.compromise.pull[0].how }));
     $("sweep-box").hidden = !sw && !ks; $("poison-box").hidden = !po.length;
     if (ks) {
-      $("sweep-note").innerHTML = `<b>Emptied with the wallet's own key: ${aLink(ks.address, ks.address)}</b><br>${ks.count} transfers on ${ks.chains.map(chip).join(" ")} between ${when(ks.first)} and ${when(ks.last)} UTC, to an address this wallet had never paid before.${ks.legacy ? " “Legacy” means an older transaction format this wallet does not normally use, typical of a script holding a stolen key." : ""}`;
+      $("sweep-note").innerHTML = ks.pulled ? `<b>Taken with a permission by ${aLink(ks.address, ks.address)}</b><br>${ks.count} transfers on ${ks.chains.map(chip).join(" ")}, sent by someone else's transactions using ${esc(ks.pulled.join(", "))}.` : `<b>Emptied with the wallet's own key: ${aLink(ks.address, ks.address)}</b><br>${ks.count} transfers on ${ks.chains.map(chip).join(" ")} between ${when(ks.first)} and ${when(ks.last)} UTC, to an address this wallet had never paid before.${ks.legacy ? " “Legacy” means an older transaction format this wallet does not normally use, typical of a script holding a stolen key." : ""}`;
       empty("c-sweeps", "");
       $("sweep-table").innerHTML = `<div class="tw"><table><tr><th>Time (UTC)</th><th>Chain</th><th>Asset</th><th class="n">Amount</th><th>Format</th><th>Transaction</th></tr>` + ks.items.map(x => `<tr><td>${when(x.ts)}</td><td>${chip(x.c)}</td><td>${esc(x.a)}</td><td class="n">${Number(x.v).toLocaleString("en-US", { maximumFractionDigits: 8 })}</td><td>${x.t === 0 ? '<span class="tag bad">legacy</span>' : x.t == null ? "not checked" : "type " + x.t}</td><td><a href="${exT(x.h, x.c)}" target="_blank" rel="noopener">${short(x.h)}</a></td></tr>`).join("") + `</table></div>`;
     }
@@ -334,17 +358,73 @@
       items.map(x => `<tr><td>${when(x.ts)}</td><td>${esc(x.a)}</td><td class="n">${Number(x.v).toLocaleString("en-US", { maximumFractionDigits: 4 })}</td><td class="n">${usd(x.u)}</td><td><a href="${exT(x.h, i.chain)}" target="_blank" rel="noopener">${short(x.h)}</a></td></tr>`).join("") + `</table></div>`;
   }
 
+  // Follow the money to the end: from every starting chain, across bridges (resolved by the server), and on from every loose end,
+  // until it reaches an exchange, a mixer, a chain this site cannot read, or money that has not moved. At most 14 trace calls.
+  async function followAll(starts, say) {
+    const G = { nodes: {}, links: {}, crossings: [], resting: [], open: [], calls: 0 }, me = D.address;
+    const go = j => { G.calls++; return fetch(`/api/trace?address=${j.address}&since=${j.since || 0}&chain=${j.chain}&depth=${j.depth}`).then(r => r.json()).catch(e => ({ error: e.message })); };
+    const add = (r, base) => {
+      r.nodes.forEach(x => {
+        const o = G.nodes[x.id], hop = x.hop + base;
+        if (!o) G.nodes[x.id] = { ...x, hop, chain: r.chain, kind: x.kind === "start" && base > 0 ? "unknown" : x.kind };
+        else { o.usd += x.hop ? x.usd : 0; o.hop = Math.min(o.hop, hop); if (o.kind === "unknown" && !["unknown", "start"].includes(x.kind)) { o.kind = x.kind; o.name = x.name; } }
+      });
+      r.links.forEach(l => { const k = l.source + ">" + l.target, o = G.links[k]; if (!o) G.links[k] = { ...l }; else { o.usd += l.usd; o.count += l.count; } });
+    };
+    let jobs = starts.map(x => ({ ...x, base: 0, depth: 2 }));
+    for (let round = 0; round < 4 && jobs.length && G.calls < 14; round++) {
+      say(round, jobs.length);
+      jobs = jobs.slice(0, 14 - G.calls);
+      const res = await Promise.all(jobs.map(j => go(j).then(r => ({ j, r }))));
+      const next = [];
+      for (const { j, r } of res) {
+        if (!r || r.error || !r.nodes) continue;
+        if (j.base > 0 && !r.links.length) G.resting.push({ address: j.address, chain: j.chain });
+        add(r, j.base);
+        for (const c of r.crossings || []) {
+          const bh = G.nodes[c.bridge] ? G.nodes[c.bridge].hop : j.base + 1;
+          G.crossings.push({ ...c, fromChain: r.chain });
+          if (!c.recipient) continue;
+          if (!G.nodes[c.recipient]) G.nodes[c.recipient] = { id: c.recipient, hop: bh + 1, usd: c.usd, chain: c.toChain, kind: c.toChain === "solana" ? "solana" : c.toChain ? "unknown" : "offsite", name: c.toChain === "solana" ? "On Solana (via " + c.tool + ")" : null };
+          G.links[c.bridge + ">" + c.recipient] = { source: c.bridge, target: c.recipient, usd: c.usd, count: 1, assets: ["bridged"], first: c.ts, chain: r.chain, crossing: c };
+          if (c.toChain && c.toChain !== "solana" && /^0x[0-9a-f]{40}$/.test(c.recipient)) next.push({ address: c.recipient, chain: c.toChain, since: c.ts || 0, base: bh + 1, depth: 2 });
+        }
+        for (const id of r.loose || []) next.push({ address: id, chain: r.chain, since: j.since, base: G.nodes[id] ? G.nodes[id].hop : j.base + r.depth, depth: 2 });
+      }
+      jobs = next.filter((x, k, l) => l.findIndex(y => y.address === x.address && y.chain === x.chain) === k);
+    }
+    G.open = jobs.map(j => j.address);
+    return { for: me, start: starts[0].address, nodes: Object.values(G.nodes), links: Object.values(G.links), crossings: G.crossings, resting: G.resting, open: G.open };
+  }
+
+  // where each branch of the trail stopped, and what the victim can do about each one
+  function ends(T) {
+    const byId = {}; T.nodes.forEach(x => byId[x.id] = x);
+    const rows = [];
+    T.nodes.filter(x => ["exchange", "deposit"].includes(x.kind)).forEach(x => rows.push([x.kind === "deposit" ? "Exchange deposit address" : "Exchange", x, `${esc(x.name || "An exchange")} knows whose account this is. Send them the address and the transaction links, and file a police report: exchanges freeze and identify accounts on police requests.`]));
+    T.nodes.filter(x => x.kind === "mixer").forEach(x => rows.push(["Mixer", x, "The money was mixed here. The public trail is cut; report the address to the police with the rest of the evidence."]));
+    T.crossings.forEach(c => { const x = { ...(byId[c.recipient] || { id: c.recipient || c.bridge }), usd: c.usd, chain: c.toChain }; rows.push([`Bridged ${esc(CN[c.fromChain] || c.fromChain)} → ${esc(c.toChain === "solana" ? "Solana" : CN[c.toChain] || ("chain " + c.toChainId))}`, x, c.toChain && c.toChain !== "solana" ? `Followed onto ${esc(CN[c.toChain] || c.toChain)} through ${esc(c.tool)}.` : `Paid out through ${esc(c.tool)}${c.recipient ? " to this address" : ""}. Scan it on its own chain to keep going.`]); });
+    T.nodes.filter(x => x.kind === "bridge" && !T.crossings.some(c => c.bridge === x.id)).forEach(x => rows.push(["Bridge, destination unknown", x, `${esc(x.name || "A bridge")} did not say where it paid out. Its explorer can, from the transaction links.`]));
+    T.resting.forEach(r => { const x = byId[r.address]; if (x && x.usd >= 10) rows.push(["Still sitting here", x, "The money has not moved on from this address. This is the best place to point a bounty or a report."]); });
+    T.open.map(a => byId[a]).filter(Boolean).sort((a, b) => b.usd - a.usd).slice(0, 5).forEach(x => rows.push(["Not followed further", x, "The trail goes on from here; open it on Arkham to keep going."]));
+    // one row per address and kind of end, the biggest first within each kind
+    const seenRow = new Set(); for (let k = rows.length - 1; k >= 0; k--) { const key = rows[k][0] + rows[k][1].id; if (seenRow.has(key)) rows.splice(k, 1); else seenRow.add(key); }
+    $("trail-ends").innerHTML = rows.length ? `<h4 class="ends-h">WHERE THE MONEY ENDED</h4><div class="tw"><table><tr><th>End</th><th>Address</th><th>Chain</th><th class="n">Reached it</th><th>What it means</th></tr>${rows.map(([k, x, w]) => `<tr><td><span class="tag ${x.kind || ""}">${k}</span></td><td>${aLink(x.id, x.name)}</td><td>${x.chain ? (x.chain === "solana" ? '<span class="tag chain">Solana</span>' : chip(x.chain)) : ""}</td><td class="n">${x.usd ? usd(x.usd) : ""}</td><td>${w}</td></tr>`).join("")}</table></div>` : "";
+  }
+
   async function trail() {
     const i = D.incident, ks = D.compromise.keySweep, sw = D.compromise.sweeper || (ks && { address: ks.address, chains: ks.chains, first: ks.first }), from = sw ? sw.address : i ? i.to : D.address, tc = sw ? sw.chains[0] : i ? i.chain : MAIN, since = sw ? sw.first : i ? i.start : 0, n = $("trail-note");
     n.className = "note"; n.textContent = "Following the money…";
-    try {
-      T = await (await fetch(`/api/trace?address=${from}&since=${since}&chain=${tc}`)).json();
-      if (T.error) throw new Error(T.error);
-    } catch (e) { n.textContent = "The trail could not be loaded: " + e.message; return; }
-    const exits = T.nodes.filter(x => ["exchange", "mixer", "bridge", "deposit"].includes(x.kind));
-    n.innerHTML = (sw ? `Starting from the sweeper, ${aLink(from, null, tc)}, on ${chip(tc)}: everything it has sent on since it first touched this wallet. That includes money taken from other victims. ` : i ? `Starting from the address that received the funds, ${aLink(from, null, tc)}. ` : `No drain was found, so this is simply where this wallet sends money. `) +
-      (T.links.length ? `${T.nodes.length - 1} addresses, two steps deep. ` : "It has not moved anything on since. ") +
-      (exits.length ? `It reaches ${exits.map(x => `<span class="tag ${x.kind}">${esc(x.name || x.kind)}</span>`).join(" ")}. The trail stops there. What happens inside an exchange is not on any blockchain, so no tool can follow it; but the exchange knows whose account received the deposit, and it will tell the police. Give them the deposit address and the transaction links.` : "");
+    // every chain the theft touched is a starting point
+    const starts = (D.compromise.sweeper ? D.compromise.sweeper.allChains : ks ? ks.chains : [tc]).slice(0, 5).map(c => ({ address: from, chain: c, since }));
+    try { T = await followAll(starts, (r, k) => n.textContent = `Following the money… round ${r + 1}, ${k} trail${k > 1 ? "s" : ""} open`); }
+    catch (e) { n.textContent = "The trail could not be loaded: " + e.message; return; }
+    if (D.address !== T.for) return;
+    const exits = T.nodes.filter(x => ["exchange", "mixer", "deposit"].includes(x.kind));
+    n.innerHTML = (D.compromise.sweeper ? `Starting from the sweeper, ${aLink(from)}, on ${starts.map(x => chip(x.chain)).join(" ")}: everything it has sent on since it first touched this wallet. That includes money taken from other victims. ` : ks ? `Starting from the address that emptied the wallet, ${aLink(from)}, on ${starts.map(x => chip(x.chain)).join(" ")}. ` : i ? `Starting from the address that received the funds, ${aLink(from)}. ` : `No theft was found, so this is simply where this wallet sends money. `) +
+      (T.links.length ? `${T.nodes.length - 1} addresses, up to ${Math.max(...T.nodes.map(x => x.hop))} steps deep${T.crossings.length ? `, across ${T.crossings.length} bridge crossing${T.crossings.length > 1 ? "s" : ""}` : ""}. ` : "It has not moved anything on since. ") +
+      (exits.length ? `It reaches ${exits.map(x => `<span class="tag ${x.kind}">${esc(x.name || x.kind)}</span>`).join(" ")}. What happens inside an exchange is not on any blockchain, but the exchange knows whose account received the deposit, and it will tell the police.` : "");
+    ends(T);
     if (!T.links.length) { ["c-sankey", "c-graph", "c-funnel", "c-tree"].forEach(id => empty(id, "Nothing has moved yet.")); return; }
     const byId = {}; T.nodes.forEach(x => byId[x.id] = x);
     const nm = x => (x.name || short(x.id)) + (x.kind === "start" ? " (start)" : "");
@@ -352,13 +432,13 @@
     draw("c-sankey", { tooltip: { ...base.tooltip, formatter: p => p.dataType === "edge" ? `${esc(p.data.source)} → ${esc(p.data.target)}<br>${usd(p.data.real)} · ${p.data.count} transfers` : esc(p.name) },
       series: [{ type: "sankey", left: 10, right: 150, nodeGap: 12, emphasis: { focus: "adjacency" }, lineStyle: { color: "source", opacity: .35 }, label: { color: C.ink, fontSize: 11 },
         data: T.nodes.map(x => ({ name: nm(x), itemStyle: { color: KIND[x.kind] }, addr: x.id })), links: fwd.map(l => ({ source: nm(byId[l.source]), target: nm(byId[l.target]), value: Math.max(l.usd, 1), real: l.usd, count: l.count })) }] })
-      .on("click", p => p.dataType === "node" && open(exA(p.data.addr, tc), "_blank"));
+      .on("click", p => p.dataType === "node" && open(exA(p.data.addr), "_blank"));
     const kinds = [...new Set(T.nodes.map(x => x.kind))];
     draw("c-graph", { legend: { data: kinds.map(k => KNAME[k] || k), textStyle: { color: C.dim }, bottom: 0 }, tooltip: { ...base.tooltip, formatter: p => p.dataType === "node" ? `${esc(p.data.label)}<br>${p.data.id}<br>received ${usd(p.data.usd)}` : `${usd(p.data.usd)} · ${p.data.count} transfers<br>${esc(p.data.assets.join(", "))}` },
       series: [{ type: "graph", layout: "force", roam: true, draggable: true, force: { repulsion: 260, edgeLength: [70, 170] }, edgeSymbol: ["none", "arrow"], edgeSymbolSize: 7, label: { show: true, color: C.ink, fontSize: 10, position: "right", formatter: p => p.data.label },
         categories: kinds.map(k => ({ name: KNAME[k] || k, itemStyle: { color: KIND[k] } })), lineStyle: { color: "#59606a", width: 1.2, curveness: .12 },
         data: T.nodes.map(x => ({ id: x.id, name: x.id, label: x.name || short(x.id), usd: x.usd, category: kinds.indexOf(x.kind), symbolSize: x.kind === "start" ? 30 : 12 + Math.min(26, Math.sqrt(x.usd) / 6) })), links: T.links.map(l => ({ source: l.source, target: l.target, usd: l.usd, count: l.count, assets: l.assets })) }] })
-      .on("click", p => p.dataType === "node" && open(exA(p.data.id, tc), "_blank"));
+      .on("click", p => p.dataType === "node" && open(exA(p.data.id), "_blank"));
     // every stage is a part of the one before it, so the funnel can only narrow
     const first = T.links.filter(l => l.source === T.start), tot = l => Math.round(l.reduce((a, x) => a + x.usd, 0));
     const known = first.filter(l => byId[l.target].kind !== "unknown"), out = first.filter(l => ["exchange", "mixer", "bridge"].includes(byId[l.target].kind));

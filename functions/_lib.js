@@ -32,8 +32,29 @@ export const CHAINS = [
   { key: "ronin", id: 2020, name: "Ronin", host: "ronin-mainnet", native: "RON", cg: "coingecko:ronin", llama: "ronin", explorer: "https://app.roninchain.com" },
   { key: "apechain", id: 33139, name: "ApeChain", host: "apechain-mainnet", native: "APE", cg: "coingecko:apecoin", llama: "apechain", explorer: "https://apescan.io" },
   { key: "lens", id: 232, name: "Lens", host: "lens-mainnet", native: "GHO", cg: "coingecko:gho", llama: "lens", explorer: "https://explorer.lens.xyz" },
-  { key: "story", id: 1514, name: "Story", host: "story-mainnet", native: "IP", cg: "coingecko:story-2", llama: "story", explorer: "https://www.storyscan.io" },
+  { key: "story", id: 1514, name: "Story", host: "story-mainnet", native: "IP", cg: "coingecko:story-2", llama: "story", explorer: "https://www.storyscan.io" },  { key: "mantle", id: 5000, name: "Mantle", host: "mantle-mainnet", native: "MNT", cg: "coingecko:mantle", llama: "mantle", explorer: "https://mantlescan.xyz" },
+  { key: "sonic", id: 146, name: "Sonic", host: "sonic-mainnet", native: "S", cg: "coingecko:sonic-3", llama: "sonic", explorer: "https://sonicscan.org" },
+  { key: "sei", id: 1329, name: "Sei", host: "sei-mainnet", native: "SEI", cg: "coingecko:sei-network", llama: "sei", explorer: "https://seitrace.com" },
+  { key: "opbnb", id: 204, name: "opBNB", host: "opbnb-mainnet", native: "BNB", cg: "coingecko:binancecoin", llama: "op_bnb", explorer: "https://opbnb.bscscan.com" },
+  { key: "metis", id: 1088, name: "Metis", host: "metis-mainnet", native: "METIS", cg: "coingecko:metis-token", llama: "metis", explorer: "https://andromeda-explorer.metis.io" },
+  { key: "fraxtal", id: 252, name: "Fraxtal", host: "frax-mainnet", native: "frxETH", cg: "coingecko:ethereum", llama: "fraxtal", explorer: "https://fraxscan.com" },
+  { key: "mode", id: 34443, name: "Mode", host: "mode-mainnet", native: "ETH", cg: "coingecko:ethereum", llama: "mode", explorer: "https://modescan.io" },
+  { key: "rootstock", id: 30, name: "Rootstock", host: "rootstock-mainnet", native: "RBTC", cg: "coingecko:rootstock", llama: "rsk", explorer: "https://rootstock.blockscout.com" },
+  { key: "flow", id: 747, name: "Flow EVM", host: "flow-mainnet", native: "FLOW", cg: "coingecko:flow", llama: "flow", explorer: "https://evm.flowscan.io" },
+  { key: "zetachain", id: 7000, name: "ZetaChain", host: "zetachain-mainnet", native: "ZETA", cg: "coingecko:zetachain", llama: "zeta", explorer: "https://zetachain.blockscout.com" },
+  { key: "plasma", id: 9745, name: "Plasma", host: "plasma-mainnet", native: "XPL", cg: "coingecko:plasma", llama: "plasma", explorer: "https://plasmascan.to" },
+  { key: "katana", id: 747474, name: "Katana", host: "katana-mainnet", native: "ETH", cg: "coingecko:ethereum", llama: "katana", explorer: "https://katanascan.com" },
+  { key: "anime", id: 69000, name: "Animechain", host: "anime-mainnet", native: "ANIME", cg: "coingecko:anime", llama: "anime", explorer: "https://explorer-animechain-39xf6m45e3.t.conduit.xyz" },
+  { key: "astar", id: 592, name: "Astar", host: "astar-mainnet", native: "ASTR", cg: "coingecko:astar", llama: "astar", explorer: "https://astar.blockscout.com" },
+  { key: "moonbeam", id: 1284, name: "Moonbeam", host: "moonbeam-mainnet", native: "GLMR", cg: "coingecko:moonbeam", llama: "moonbeam", explorer: "https://moonbeam.moonscan.io" },
+  { key: "megaeth", id: 4326, name: "MegaETH", host: "megaeth-mainnet", native: "ETH", cg: "coingecko:ethereum", llama: "megaeth", explorer: "https://megaexplorer.xyz" },
+  { key: "superseed", id: 5330, name: "Superseed", host: "superseed-mainnet", native: "ETH", cg: "coingecko:ethereum", llama: "superseed", explorer: "https://explorer.superseed.xyz" },
+  { key: "boba", id: 288, name: "Boba", host: "boba-mainnet", native: "ETH", cg: "coingecko:ethereum", llama: "boba", explorer: "https://bobascan.com" },
+  { key: "bob", id: 60808, name: "BOB", host: "bob-mainnet", native: "ETH", cg: "coingecko:ethereum", llama: "bob", explorer: "https://explorer.gobob.xyz" },
+  { key: "citrea", id: 4114, name: "Citrea", host: "citrea-mainnet", native: "cBTC", cg: "coingecko:bitcoin", llama: "citrea", explorer: "https://explorer.mainnet.citrea.xyz" },
 ];
+// chain ids the bridge resolvers report, mapped to our keys; Solana uses Relay's id
+export const SOLANA_IDS = [792703809, 1151111081099710];
 export const chainOf = k => CHAINS.find(c => c.key === k) || CHAINS[0];
 
 // Several JSON-RPC calls in one HTTP request. A failed call comes back as null instead of failing the rest.

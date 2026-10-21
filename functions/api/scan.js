@@ -1,4 +1,5 @@
 import { isAddr, json, CHAINS, chainOf, batch, rpc, transferParams, mapTransfers, priceAll, labels, goplusAddress, goplusApprovals, tracer } from "../_lib.js";
+import { findKeySweep, METHODS } from "../../public/detect.js";
 
 // chains the IMD oracle can read evidence on (api.imd.fun /requests/check, 14 Oct 2026)
 const ORACLE_CHAINS = ["base", "arb", "bnb", "eth", "robinhood"];
@@ -13,6 +14,9 @@ const SAFE_DELEGATES = {
   "0x7702cb554e6bfb442cb743a7df23154544a7176c": "Coinbase smart wallet",
 };
 const OWN_USE = ["exchange", "swap", "bridge", "other"]; // labelled services: the owner's ordinary activity
+const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
+// function selectors that move tokens on someone else's behalf: transferFrom, safeTransferFrom (721/1155, both forms), permit, and Permit2's transfers
+const PULL_SELECTORS = { "0x23b872dd": "transferFrom", "0x42842e0e": "safeTransferFrom", "0xb88d4fde": "safeTransferFrom", "0xf242432a": "safeTransferFrom", "0x2eb2c2d6": "safeBatchTransferFrom", "0xd505accf": "permit", "0x30f28b7a": "Permit2 permitTransferFrom", "0xedd9444b": "Permit2 permitTransferFrom", "0x36c78516": "Permit2 transferFrom", "0x0d58b1db": "Permit2 transferFrom", "0x2b67b570": "Permit2 permit", "0x2a2d80d1": "Permit2 permit" };
 const DEFAULT = ["eth", "base", "arb", "opt", "bnb", "polygon"], MAX_CHAINS = 10; // more chains than this would break the per-request limits of the host
 const cap = k => k === "eth" ? 500 : 300;
 
@@ -54,7 +58,8 @@ export async function onRequestGet(ctx) {
     ]);
     const approvals = apLists.some(l => l) ? apLists.filter(Boolean).flat() : (active.length ? null : []);
     const tx = Object.assign({}, ...txMaps);
-    for (const x of out) { const d = tx[x.hash]; if (d) { x.signer = d.from.toLowerCase(); x.type4 = d.type === "0x4"; x.txType = parseInt(d.type || "0x0", 16); } }
+    for (const x of out) { const d = tx[x.hash]; if (d) { x.signer = d.from.toLowerCase(); x.type4 = d.type === "0x4"; x.txType = parseInt(d.type || "0x0", 16); x.txTo = (d.to || "").toLowerCase(); x.sel = (d.input || "").slice(0, 10); } }
+    for (const x of out) x.native = x.cat === "external" || x.cat === "internal";
 
     // 3. who this wallet sends to / receives from
     const agg = list => {
@@ -69,8 +74,16 @@ export async function onRequestGet(ctx) {
     const sent = agg(out), received = agg(inn);
     for (const c of sent.concat(received)) if (c.first === Infinity) c.first = c.last || null; // some chains return no timestamps
     const sweep = findSweeper(out, address, new Set(chains.filter(c => c.delegate && !c.delegateName).map(c => c.key))), poison = findPoisoning(out, sent);
-    const candidates = findIncidents(out, address), keySweeps = findKeySweep(out, address, chains.filter(c => c.delegate && !c.delegateName).length);
-    const want = [...new Set(sent.slice(0, 50).map(c => c.address).concat(received.slice(0, 25).map(c => c.address), candidates.map(c => c.to), sweep.map(s => s.address), keySweeps.map(k => k.address), (approvals || []).slice(0, 40).map(a => a.spender)))];
+    const lastOn = {}, seen = {};
+    out.forEach(x => { if (x.ts) { lastOn[x.chain] = Math.max(lastOn[x.chain] || 0, x.ts); seen[x.to] = Math.min(seen[x.to] || Infinity, x.ts); } });
+    const typed = out.filter(x => x.txType != null && x.signer === address), legacyShare = typed.length ? typed.filter(x => x.txType === 0).length / typed.length : 0;
+    const strangeCount = chains.filter(c => c.delegate && !c.delegateName).length;
+    const tail = out.filter(x => x.ts && x.ts >= lastOn[x.chain] - 2 * 86400).sort((a, b) => b.ts - a.ts).slice(0, 400)
+      .map(x => ({ to: x.to, chain: x.chain, ts: x.ts, native: x.native, priced: !!x.priced, asset: x.asset, value: x.value, usd: Math.round(x.usd * 100) / 100, hash: x.hash, txType: x.txType, signer: x.signer }));
+    const candidates = findIncidents(out, address), keySweeps = findKeySweep({ tail, self: address, seen, lastOn, strangeCount, legacyShare });
+    const knownDelegate = new Set(chains.filter(c => c.delegateName).map(c => c.key));
+    const pulls = findPull(out, address, knownDelegate, new Set(chains.filter(c => c.delegate && !c.delegateName).map(c => c.key))), poisonLoss = findPoisonLoss(out, address);
+    const want = [...new Set(sent.slice(0, 50).map(c => c.address).concat(received.slice(0, 25).map(c => c.address), candidates.map(c => c.to), sweep.map(s => s.address), keySweeps.map(k => k.address), pulls.map(p => p.to), pulls.map(p => p.txTo), (approvals || []).slice(0, 40).map(a => a.spender)))].filter(Boolean);
     const lab = await t.step("address_labels", { addresses: want.length }, () => labels(env, request, want));
     const tag = c => Object.assign(c, lab[c.address] ? { kind: lab[c.address].kind, name: lab[c.address].name } : { kind: "unknown", name: null });
     sent.forEach(tag); received.forEach(tag);
@@ -84,6 +97,10 @@ export async function onRequestGet(ctx) {
     // the wallet's own key emptying it across chains: only to an address no public label explains
     const keySweep = sweeper ? null : keySweeps.find(k => !lab[k.address]) || null;
     if (keySweep) { const c = sent.find(x => x.address === keySweep.address); if (c) { c.kind = "bad"; c.name = "Emptied the wallet with its key"; } }
+    // a third party moving tokens to an address no label explains, by calling the token, Permit2, or an unlabelled contract
+    const pull = summarisePulls(pulls.filter(p => !lab[p.to] && (p.txTo === p.contract || p.txTo === PERMIT2 || !lab[p.txTo]) && (!sweeper || p.to !== sweeper.address)));
+    pull.forEach(p => { const c = sent.find(x => x.address === p.to); if (c) { c.kind = "bad"; c.name = "Took tokens with a permission"; } });
+    poisonLoss.forEach(p => { const c = sent.find(x => x.address === p.fake); if (c) { c.kind = "poison"; c.name = "Look-alike: real money sent here"; } });
     if (strange.length) {
       const ver = await Promise.all(strange.map(c => t.step("sourcify_lookup", { chain: c.key, address: c.delegate }, () => fetch("https://sourcify.dev/server/v2/contract/" + chainOf(c.key).id + "/" + c.delegate).then(r => r.json()).then(j => !!j.match).catch(() => null))));
       strange.forEach((c, i) => c.delegateVerified = ver[i]);
@@ -107,7 +124,7 @@ export async function onRequestGet(ctx) {
     }
     const compromise = {
       level: (sweeper || keySweep) && (sweeper && sweeper.type4 || strange.length) ? "confirmed" : sweeper || keySweep ? "likely" : strange.length ? "suspected" : "none",
-      sweeper, keySweep, delegations: chains.filter(c => c.delegate).map(c => ({ chain: c.key, chainName: c.name, delegate: c.delegate, name: c.delegateName, verified: c.delegateVerified == null ? null : c.delegateVerified })), poisoning: poison,
+      sweeper, keySweep, pull, poisonLoss, delegations: chains.filter(c => c.delegate).map(c => ({ chain: c.key, chainName: c.name, delegate: c.delegate, name: c.delegateName, verified: c.delegateVerified == null ? null : c.delegateVerified })), poisoning: poison,
     };
 
     // a burst of several assets leaving at once, on top of the sweeper check; moving funds to a labelled service is ordinary use
@@ -135,6 +152,9 @@ export async function onRequestGet(ctx) {
       sweeps: sweeper ? out.filter(x => x.to === sweeper.address).sort((a, b) => b.ts - a.ts).slice(0, 60).map(x => ({ h: x.hash, ts: x.ts, c: x.chain, a: x.asset, v: x.value, u: Math.round(x.usd * 100) / 100, by: x.signer ? (x.signer === address ? "owner key" : x.signer === x.to ? "the receiver" : "third party") : "not checked", t4: !!x.type4 })) : [],
       transfers: all.sort((a, b) => b.ts - a.ts).slice(0, 600).map(x => ({ h: x.hash, ts: x.ts, d: x.dir, c: x.chain, a: x.asset, v: x.value, u: Math.round(x.usd * 100) / 100, p: x.dir === "out" ? x.to : x.from })),
       story: story({ incident, compromise, approvals, flags, risk, out, inn, chains }),
+      checks: checks({ compromise, incident, risk, approvals }),
+      // what the page needs to run the cross-chain rules again after folding several scans of this wallet together
+      cross: { tail, seen: Object.fromEntries(Object.entries(seen).filter(([a]) => tail.some(x => x.to === a))), lastOn, strangeCount, typed: typed.length, legacy: typed.filter(x => x.txType === 0).length },
     });
   } catch (e) {
     t.fail(e);
@@ -176,27 +196,38 @@ function findPoisoning(out, sent) {
   return pairs.sort((a, b) => b.last - a.last).slice(0, 20);
 }
 
-// A stolen key used directly looks like the owner: same signer, ordinary transactions. What gives it away is the sweep: the native coin
-// on several chains going to one new address within hours, at the end of the wallet's activity there. On its own that could be the owner
-// moving to a new wallet, so it also needs an unknown delegation, the older transaction format the owner does not normally use, or 3+ chains.
-function findKeySweep(out, self, strangeCount) {
-  const native = out.filter(x => x.cat === "external" && x.to !== self && !BURN.includes(x.to) && x.ts);
-  const lastOn = {}; out.forEach(x => { if (x.ts) lastOn[x.chain] = Math.max(lastOn[x.chain] || 0, x.ts); });
-  const typed = out.filter(x => x.txType != null && x.signer === self), legacyShare = typed.length ? typed.filter(x => x.txType === 0).length / typed.length : 0;
-  const by = {}; native.forEach(x => (by[x.to] = by[x.to] || []).push(x));
-  const found = [];
-  for (const to in by) {
-    const l = by[to].filter(x => x.ts >= lastOn[x.chain] - 2 * 86400).sort((a, b) => a.ts - b.ts);
-    if (!l.length) continue;
-    const win = l.filter(x => x.ts <= l[0].ts + 12 * 3600), chains = [...new Set(win.map(x => x.chain))];
-    if (chains.length < 2) continue;
-    if (out.some(x => x.to === to && x.ts && x.ts < l[0].ts - 86400)) continue; // a regular counterparty, not a new address
-    const legacy = win.some(x => x.txType === 0) && legacyShare < 0.5;
-    if (!strangeCount && !legacy && chains.length < 3) continue;
-    found.push({ address: to, chains, count: win.length, usd: Math.round(win.reduce((a, x) => a + x.usd, 0) * 100) / 100, first: l[0].ts, last: win[win.length - 1].ts, legacy,
-      items: win.map(x => ({ h: x.hash, ts: x.ts, c: x.chain, a: x.asset, v: x.value, u: Math.round(x.usd * 100) / 100, t: x.txType })) });
+// Tokens taken by someone else's transaction: the wallet once signed a permission (approve, permit, Permit2, setApprovalForAll)
+// and a third party used it. Chains where the wallet runs known smart-account software are skipped: there a relayer sends the owner's own transactions.
+function findPull(out, self, knownDelegate, strangeChains) {
+  return out.filter(x => x.priced && x.usd >= 1 && x.signer && x.signer !== self && x.signer !== x.to && x.to !== self && !BURN.includes(x.to) && !knownDelegate.has(x.chain))
+    .map(x => ({ to: x.to, chain: x.chain, ts: x.ts, asset: x.asset, value: x.value, usd: x.usd, hash: x.hash, signer: x.signer, txTo: x.txTo, contract: x.contract, how: strangeChains.has(x.chain) ? "the unknown EIP-7702 delegate" : PULL_SELECTORS[x.sel] || (x.txTo === PERMIT2 ? "Permit2" : "a contract call") }));
+}
+function summarisePulls(list) {
+  const by = {};
+  for (const p of list) { const g = by[p.to] || (by[p.to] = { to: p.to, usd: 0, count: 0, chains: {}, how: {}, signers: {}, first: p.ts || Infinity, last: p.ts, items: [] }); g.usd += p.usd; g.count++; g.chains[p.chain] = 1; g.how[p.how] = 1; g.signers[p.signer] = 1; g.first = Math.min(g.first, p.ts || Infinity); g.last = Math.max(g.last, p.ts); g.items.push({ h: p.hash, ts: p.ts, c: p.chain, a: p.asset, v: p.value, u: Math.round(p.usd * 100) / 100, how: p.how, by: p.signer }); }
+  return Object.values(by).map(g => ({ ...g, usd: Math.round(g.usd * 100) / 100, chains: Object.keys(g.chains), how: Object.keys(g.how), signers: Object.keys(g.signers), first: g.first === Infinity ? g.last : g.first, items: g.items.slice(0, 30) })).sort((a, b) => b.usd - a.usd);
+}
+
+// Money sent to a planted look-alike. In a group of addresses that share the first 4 and last 4 characters, the planted one
+// first appears through a transfer the wallet did not really make (signed by someone else, zero value, or a token with no price).
+// If the owner later paid that address real money, the poisoning worked.
+function findPoisonLoss(out, self) {
+  const groups = {};
+  for (const x of out) { if (BURN.includes(x.to) || !x.ts) continue; const k = x.chain + x.to.slice(0, 6) + x.to.slice(-4); ((groups[k] = groups[k] || {})[x.to] = groups[k][x.to] || []).push(x); }
+  const loss = [];
+  for (const k in groups) {
+    const g = groups[k], addrs = Object.keys(g); if (addrs.length < 2) continue;
+    for (const a of addrs) {
+      const l = g[a].sort((p, q) => p.ts - q.ts), first = l[0];
+      const planted = (first.signer && first.signer !== self) || !first.value || !first.priced;
+      if (!planted) continue;
+      const paid = l.filter(x => x.ts > first.ts && x.priced && x.usd >= 1 && (!x.signer || x.signer === self));
+      if (!paid.length) continue;
+      const real = addrs.filter(b => b !== a).sort((p, q) => g[q].length - g[p].length)[0];
+      loss.push({ fake: a, real, chain: first.chain, plantedAt: first.ts, usd: Math.round(paid.reduce((s2, x) => s2 + x.usd, 0) * 100) / 100, items: paid.map(x => ({ h: x.hash, ts: x.ts, c: x.chain, a: x.asset, v: x.value, u: Math.round(x.usd * 100) / 100 })) });
+    }
   }
-  return found.sort((a, b) => b.chains.length - a.chains.length || b.count - a.count);
+  return loss.sort((a, b) => b.usd - a.usd);
 }
 
 // A drain can also look like many different assets leaving for one address in a short time.
@@ -228,14 +259,14 @@ function scoreRisk({ incident, compromise, approvals, flags, sent }) {
   const strange = compromise.delegations.filter(d => !d.name).length;
   const parts = {
     "Key compromised": { confirmed: 100, likely: 85, suspected: 55, none: 0 }[compromise.level],
-    "Past drain": incident || compromise.keySweep ? 100 : 0,
+    "Past drain": incident || compromise.keySweep || compromise.pull.length || compromise.poisonLoss.length ? 100 : 0,
     "Risky approvals": Math.min(100, risky * 50 + closed * 10),
     "Open allowances": Math.min(100, unlimited * 12),
     "Unknown delegation": Math.min(100, strange * 40),
     "Being targeted": Math.min(100, compromise.poisoning.length * 25 + badPeers * 20 + flags.length * 50),
   };
   let score = Math.round(parts["Past drain"] * 0.4 + parts["Risky approvals"] * 0.3 + parts["Open allowances"] * 0.15 + parts["Unknown delegation"] * 0.3 + parts["Being targeted"] * 0.15);
-  score = Math.min(100, Math.max(score, { confirmed: 97, likely: 85, suspected: 60, none: 0 }[compromise.level]));
+  score = Math.min(100, Math.max(score, { confirmed: 97, likely: 85, suspected: 60, none: 0 }[compromise.level], compromise.pull.length || compromise.poisonLoss.length ? 85 : 0));
   return { score, level: score >= 60 ? "high" : score >= 25 ? "medium" : "low", parts, counts: { approvals: a.length, risky, unlimited, closed, badPeers, strange } };
 }
 
@@ -269,6 +300,22 @@ const money = u => "$" + Math.round(u).toLocaleString("en-US");
 const names = l => l.length > 1 ? l.slice(0, -1).join(", ") + " and " + l[l.length - 1] : l[0];
 
 // The plain-words version, delivered in the app as text messages.
+// every drain method the scan looks for, and what it found for each
+function checks({ compromise, incident, risk, approvals }) {
+  const c = compromise, found = {
+    sweeper: c.sweeper ? `${c.sweeper.address} took ${c.sweeper.totalCount} transfers on ${c.sweeper.allChains.length} chain(s)` : null,
+    keysweep: c.keySweep ? `${c.keySweep.units} assets on ${c.keySweep.chains.length} chain(s) went to ${c.keySweep.address} within hours` : null,
+    delegation: c.delegations.some(d => !d.name) ? `unknown delegate on ${c.delegations.filter(d => !d.name).length} chain(s)` : null,
+    pull: c.pull.length ? `${c.pull.reduce((a, p) => a + p.count, 0)} transfers taken by a third party to ${c.pull.length} address(es)` : null,
+    burst: incident ? `${incident.assetCount} assets to one address within an hour` : null,
+    poisonloss: c.poisonLoss.length ? `${c.poisonLoss.length} payment(s) to a planted look-alike` : null,
+    poisoning: c.poisoning.length ? `${c.poisoning.length} look-alike address(es) planted` : null,
+    approvals: approvals === null ? undefined : risk.counts.risky || risk.counts.closed ? `${risk.counts.risky} flagged, ${risk.counts.closed} closed-source spender(s)` : null,
+    flagged: risk.counts.badPeers ? `${risk.counts.badPeers} flagged receiver(s)` : null,
+  };
+  return METHODS.map(m => ({ id: m.id, name: m.name, how: m.how, found: found[m.id] === undefined ? null : !!found[m.id], detail: found[m.id] || null }));
+}
+
 function story({ incident, compromise, approvals, flags, risk, out, inn, chains }) {
   const s = [], cn = k => chainOf(k).name;
   if (!out.length && !inn.length) return ["This wallet has never moved anything on the chains I can read. There is nothing to trace yet."];
@@ -285,6 +332,11 @@ function story({ incident, compromise, approvals, flags, risk, out, inn, chains 
     s.push(`On ${when(ks.first)}, its ${names([...new Set(ks.items.map(x => x.a))])} on ${names(ks.chains.map(cn))} went to one new address ending ${ks.address.slice(-4)}, ${ks.count} transfer${ks.count > 1 ? "s" : ""} within ${Math.max(1, Math.round((ks.last - ks.first) / 3600))} hour${Math.round((ks.last - ks.first) / 3600) > 1 ? "s" : ""}, at the end of the wallet's activity on each chain.`);
     s.push((ks.legacy ? "They used an older transaction format this wallet does not normally use: the mark of a script holding the key, not a wallet app. " : "") + "They were signed with this wallet's key, so the attacker has the key or the seed phrase. If you moved everything to a new wallet yourself that day, ignore this.");
   }
+  for (const p of compromise.pull.slice(0, 2)) {
+    s.push(`${p.usd >= 1 ? "About " + money(p.usd) + " in tokens was" : "Tokens were"} taken by someone else's transaction${p.count > 1 ? "s" : ""}: ${p.count} transfer${p.count > 1 ? "s" : ""} to an address ending ${p.to.slice(-4)} on ${names(p.chains.map(cn))}, using ${names(p.how)}. ${p.how.every(h => h.includes("delegate")) ? "Whoever controls that delegate contract can move anything this wallet holds." : "This wallet once signed a permission (an approval or a permit), and a drainer used it."}`);
+  }
+  if (compromise.pull.some(p => !p.how.every(h => h.includes("delegate")))) s.push("Revoke every permission under “Open doors”. The key itself may still be safe, but any token with an open permission can be taken the same way.");
+  for (const p of compromise.poisonLoss.slice(0, 2)) s.push(`Address poisoning worked here: ${money(p.usd)} was sent to ${p.fake.slice(0, 6)}…${p.fake.slice(-4)}, a fake planted on ${when(p.plantedAt)} to look like ${p.real.slice(0, 6)}…${p.real.slice(-4)}, an address this wallet really uses.`);
   if (strange.length) s.push(`${sw || ks ? "The wallet is also" : "This wallet is"} delegated to a contract I do not recognise on ${names(strange.map(d => d.chainName))}${strange.length > 1 && new Set(strange.map(d => d.delegate)).size > 1 ? ", a different one on each chain" : ""}. A delegate contract can act as the wallet. ${sw ? "That is how incoming funds get swept." : "If you did not set this up, treat the wallet as compromised."}`);
   const known = compromise.delegations.filter(d => d.name);
   if (known.length && !sw) s.push(`It is delegated to ${known[0].name} on ${names(known.map(d => d.chainName))}. That is ordinary wallet software.`);
@@ -294,7 +346,7 @@ function story({ incident, compromise, approvals, flags, risk, out, inn, chains 
     else if (!sw) s.push("They were signed with this wallet's own key. If you did not send them, someone else has your seed phrase.");
     if (incident.receiverFlags && incident.receiverFlags.length) s.push(`The receiving address is flagged for: ${incident.receiverFlags.join(", ")}.`);
     else if (["bad", "mixer", "sanctioned"].includes(incident.receiverKind)) s.push(`The receiving address is publicly labelled “${incident.receiverName}”.`);
-  } else if (!sw && !strange.length) s.push("I found no sweeper, no unknown delegation, and no moment where many assets left at once. Those are the usual signs of a stolen key or a drain, and they are not here.");
+  } else if (!sw && !ks && !strange.length && !compromise.pull.length && !compromise.poisonLoss.length) s.push("I found no sweeper, no unknown delegation, and no moment where many assets left at once. Those are the usual signs of a stolen key or a drain, and they are not here.");
   if (compromise.poisoning.length) s.push(`Someone is also trying address poisoning: ${compromise.poisoning.length} fake transfer${compromise.poisoning.length > 1 ? "s" : ""} to look-alike addresses sit in this wallet's history. Never copy an address from your history. Check every character.`);
   if (approvals === null) s.push("I could not load the token approvals right now.");
   else if (risk.counts.risky) s.push(`${risk.counts.risky} approval${risk.counts.risky > 1 ? "s point" : " points"} at a contract flagged as malicious.`);

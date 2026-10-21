@@ -3,7 +3,7 @@
   const $ = id => document.getElementById(id);
   const C = { ink: "#d6d8cf", dim: "#8a9087", line: "#232a31", lamp: "#e9d37c", blood: "#c8463b", moss: "#7fb08a", cold: "#7fa3c7", violet: "#a48bd1", sand: "#c9a36b" };
   const KIND = { exchange: C.cold, mixer: C.blood, bad: C.blood, sanctioned: C.blood, bridge: C.moss, swap: C.moss, unknown: C.dim, other: C.sand, start: C.lamp, poison: C.violet, deposit: C.cold, solana: C.violet, offsite: C.sand, contract: "#5d6670" };
-  const KNAME = { exchange: "Exchange", mixer: "Mixer", bad: "Flagged", sanctioned: "Sanctioned", bridge: "Bridge", swap: "Swap / DEX", unknown: "No label", other: "Known contract", start: "Start", poison: "Look-alike (poisoning)", deposit: "Exchange deposit address", solana: "Bridged to Solana", offsite: "On another chain", contract: "Contract (DEX or protocol)" };
+  const KNAME = { exchange: "Exchange", mixer: "Mixer", bad: "Flagged", sanctioned: "Sanctioned", bridge: "Bridge", swap: "Swap / DEX", unknown: "No label", other: "Known contract", start: "Start", poison: "Look-alike (poisoning)", deposit: "Deposit address", solana: "Bridged to Solana", offsite: "On another chain", contract: "Contract (DEX or protocol)" };
   const PAL = [C.lamp, C.cold, C.moss, C.blood, C.violet, C.sand, "#9aa7b1", "#d98f6c"];
   const short = a => a ? a.slice(0, 6) + "…" + a.slice(-4) : "";
   const usd = v => v >= 1e6 ? "$" + (v / 1e6).toFixed(2) + "M" : v >= 1e4 ? "$" + Math.round(v / 1e3) + "k" : v > 0 && v < 1 ? "$" + v.toFixed(2) : "$" + Math.round(v).toLocaleString("en-US");
@@ -15,9 +15,10 @@
   const when = ts => new Date(ts * 1000).toISOString().replace("T", " ").slice(0, 16);
   const charts = {};
   let D = null, T = null, tapeTimer = null, curTab = "overview";
-  const OWN = ["exchange", "swap", "bridge", "other"];
-  // the owner's own swaps and bridges are real activity, but they hide the theft; this switch takes them out of the pictures
-  const peers = () => D.sent.filter(c => !$("own").checked || !OWN.includes(c.kind));
+  const OWN = ["exchange", "swap", "bridge", "other", "deposit"];
+  // the owner's own activity is real, but it hides the theft: swaps, bridges, deposits into services like an exchange or Polymarket,
+  // and everything that happened before the break-in. This switch takes it out of the pictures.
+  const peers = () => D.sent.filter(c => !$("own").checked || !(OWN.includes(c.kind) || (D.breakIn && c.last && c.last < D.breakIn && !["bad", "poison"].includes(c.kind))));
   const chip = c => `<span class="tag chain">${esc(CN[c] || c)}</span>`;
 
   // tape clock
@@ -92,6 +93,8 @@
       if (parts[0].error) throw new Error(parts[0].error);
       const d = parts.slice(1).filter(x => !x.error).reduce(merge, parts[0]);
       if (parts.length > 1) crossCheck(d);
+      $("loadt").textContent = "SEPARATING YOUR OWN ACTIVITY FROM THE THEFT…";
+      await classify(d);
       d.allChains = disc.chains; d.skipped = disc.active.slice(50).concat(groups.slice(1).filter((g, i) => parts[i + 1].error).flat()); d.contractOn = disc.chains.filter(c => c.isContract).map(c => c.key);
       await intro;
       D = d; T = null; rendered = {};
@@ -153,6 +156,47 @@
     d.risk = { ...d.risk, score: Math.max(d.risk.score, x.strangeCount ? 97 : 85), level: "high" };
     d.story = [`This wallet was emptied with its own key. On ${when(ks.first)} UTC, ${ks.units} assets on ${ks.chains.map(k => CN[k] || k).join(", ")} went to one new address ending ${ks.address.slice(-4)} within hours.`].concat(d.story);
     const ck = (d.checks || []).find(k => k.id === "keysweep"); if (ck) { ck.found = true; ck.detail = `${ks.units} assets on ${ks.chains.length} chains went to ${ks.address} within hours`; }
+  }
+
+  // Some addresses the wallet paid are its owner's own deposit addresses: an exchange, Polymarket, a bridge or a payment app
+  // gives each user one, and it passes everything straight on. Money sent there is the owner's activity, never a theft.
+  // The opposite, an address that collects from many wallets, is what a thief's address looks like.
+  async function classify(d) {
+    const c = d.compromise, want = {}, add = (a, ch) => { if (a && ch) (want[ch] = want[ch] || new Set()).add(a); };
+    if (c.keySweep) add(c.keySweep.address, c.keySweep.chains[0]);
+    (c.pull || []).slice(0, 3).forEach(p => add(p.to, p.chains[0]));
+    if (d.incident) add(d.incident.to, d.incident.chain);
+    d.sent.filter(x => x.kind === "unknown" && x.usd >= 1).slice(0, 8).forEach(x => add(x.address, x.chains[0]));
+    const res = {};
+    await Promise.all(Object.entries(want).slice(0, 4).map(([ch, set]) => fetch(`/api/classify?chain=${ch}&addresses=${[...set].slice(0, 8).join(",")}`).then(r => r.json()).then(j => (j.result || []).forEach(x => res[x.address] = x)).catch(() => {})));
+    const mine = a => res[a] && res[a].kind === "deposit", label = k => "Your deposit address" + (k.service ? " → " + k.service : "");
+    d.sent.forEach(x => {
+      const k = res[x.address]; if (!k) return;
+      if (k.kind === "deposit" && !["bad", "poison"].includes(x.kind)) { x.kind = "deposit"; x.name = label(k); d.split.ownUsd += x.usd; d.split.awayUsd = Math.max(0, d.split.awayUsd - x.usd); }
+      if (k.kind === "collector") x.collector = k.senders;
+    });
+    // a finding whose receiver turns out to be the owner's own deposit address is withdrawn
+    const dropped = [];
+    if (c.keySweep && mine(c.keySweep.address)) { dropped.push(c.keySweep.address); c.keySweep = null; }
+    if (c.pull && c.pull.some(p => mine(p.to))) { dropped.push(...c.pull.filter(p => mine(p.to)).map(p => p.to)); c.pull = c.pull.filter(p => !mine(p.to)); }
+    if (d.incident && mine(d.incident.to)) { dropped.push(d.incident.to); d.incident = null; }
+    d.sent.forEach(x => { if (dropped.includes(x.address)) { x.kind = "deposit"; x.name = label(res[x.address]); } });
+    if (dropped.length) {
+      if (!c.sweeper && !c.keySweep) c.level = c.delegations.some(x => !x.name) ? "suspected" : "none";
+      const left = c.sweeper || c.keySweep || (c.pull && c.pull.length) || (c.poisonLoss && c.poisonLoss.length) || d.incident;
+      if (!left) d.risk = { ...d.risk, parts: { ...d.risk.parts, "Past drain": 0 }, score: Math.max(c.level === "suspected" ? 60 : 0, d.risk.score - 40) };
+      d.risk.level = d.risk.score >= 60 ? "high" : d.risk.score >= 25 ? "medium" : "low";
+      d.story = dropped.map(a => `The money sent to ${short(a)} went to your own deposit address${res[a].service ? " for " + res[a].service : ""}: only your wallets ever paid it, and it passed everything straight on. That is your own activity, not a theft.`)
+        .concat(d.story.filter(line => !dropped.some(a => line.includes(a.slice(-4)))).map(line => line.replace(/^Risk score: \d+/, "Risk score: " + d.risk.score)));
+      (d.checks || []).forEach(k => { if (k.id === "keysweep" && !c.keySweep) { k.found = false; k.detail = null; } if (k.id === "pull" && !(c.pull && c.pull.length)) { k.found = false; k.detail = null; } if (k.id === "burst" && !d.incident) { k.found = false; k.detail = null; } });
+    }
+    if (c.keySweep && res[c.keySweep.address] && res[c.keySweep.address].kind === "collector") {
+      c.keySweep.collector = res[c.keySweep.address].senders;
+      d.story.splice(3, 0, `The address it went to collects from ${c.keySweep.collector} or more different wallets. That is a thief's collection address, not a new wallet of yours.`);
+    }
+    // the moment the theft started: everything before it is the owner's own history
+    const t0 = [c.sweeper && c.sweeper.first, c.keySweep && c.keySweep.first, ...(c.pull || []).map(p => p.first), d.incident && d.incident.start].filter(Boolean);
+    d.breakIn = t0.length ? Math.min(...t0) : null;
   }
 
   // ---- the story, one message at a time ----
@@ -298,7 +342,7 @@
 
   function overview() {
     const d = D, st = [
-      [d.risk.score + " / 100", "Risk score"], [d.balanceEth.toFixed(4) + " ETH", "ETH on all chains"], [usd(d.split.ownUsd), "Your swaps & bridges"], [usd(d.split.awayUsd), "Sent to other wallets"],
+      [d.risk.score + " / 100", "Risk score"], [d.balanceEth.toFixed(4) + " ETH", "ETH on all chains"], [usd(d.split.ownUsd), "Your own swaps, bridges & deposits"], [usd(d.split.awayUsd), "Sent to other wallets"],
       [(d.totals.inCount + d.totals.outCount) + (d.totals.capped ? "+" : ""), "Transfers read"], [d.approvals ? d.approvals.length : "n/a", "Open permissions"]];
     $("stats").innerHTML = st.map(([v, k]) => `<div class="stat"><b>${esc(v)}</b><span>${k}</span></div>`).join("");
     $("checks").innerHTML = d.checks ? `<figure><figcaption>Every way a wallet gets drained · what this scan found</figcaption><ul class="checks">${d.checks.map(c => `<li class="${c.found ? "hit" : c.found === null ? "na" : "clear"}"><b>${c.found ? "FOUND" : c.found === null ? "NOT CHECKED" : "CLEAR"}</b><span><i>${esc(c.name)}</i>${esc(c.found ? c.detail : c.how)}</span></li>`).join("")}</ul></figure>` : "";

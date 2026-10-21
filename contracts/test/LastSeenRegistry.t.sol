@@ -302,6 +302,101 @@ contract LastSeenRegistryTest is Test {
         reg.requestAudit(10, token);
     }
 
+    // ---- the findings from IdentityMD's review of the first launch, each one proven fixed
+
+    function test_runtimeFitsTheEip170Limit() public view {
+        assertLe(address(reg).code.length, 24_576, "runtime exceeds EIP-170; every chain refuses to deploy it");
+    }
+
+    function test_staleVerdictAfterRetryIsRefused() public {
+        (uint256 id, bytes32 r1) = _openAndAsk();
+        vm.warp(block.timestamp + 1 days + 1);
+        bytes32 r2 = reg.requestVerdict(id);
+        OracleAttestation.Attestation memory no = _answer(false, 5);
+        vm.expectRevert(LastSeenRegistry.UnknownRequest.selector);
+        intake.deliver(address(reg), r1, no, _sign(no, attesterKey, address(reg)));
+        _deliver(r2, true);
+        assertEq(uint8(reg.getCase(id).status), uint8(LastSeenRegistry.Status.Confirmed));
+        // and once settled, no later answer can flip it
+        vm.expectRevert(LastSeenRegistry.UnknownRequest.selector);
+        intake.deliver(address(reg), r2, no, _sign(no, attesterKey, address(reg)));
+    }
+
+    function test_answerForAnotherChainIsRefused() public {
+        (, bytes32 req) = _openAndAsk();
+        OracleAttestation.Attestation memory a = _answer(true, 5);
+        a.chainId = 1; // the case is on Base
+        bytes memory sig = _sign(a, attesterKey, address(reg));
+        vm.expectRevert(LastSeenRegistry.UnknownRequest.selector);
+        intake.deliver(address(reg), req, a, sig);
+    }
+
+    function test_strangerCannotTakeTheHirerSeat() public {
+        (uint256 id,) = _confirmed();
+        address stranger = address(0x5717);
+        imd.mint(stranger, 10 ether);
+        vm.startPrank(stranger);
+        imd.approve(address(reg), type(uint256).max);
+        vm.expectRevert(LastSeenRegistry.NotHirer.selector);
+        reg.postBounty(id, 1 ether, 1, 0, 30);
+        vm.stopPrank();
+        // the robbed wallet itself may hire, even if someone else opened the case
+        imd.mint(victim, 10 ether);
+        vm.startPrank(victim);
+        imd.approve(address(reg), type(uint256).max);
+        reg.postBounty(id, 1 ether, 1, 0, 30);
+        vm.stopPrank();
+        (address hirer,,,,) = reg.hunts(id);
+        assertEq(hirer, victim);
+    }
+
+    function test_hirerCannotEmptyTheRewardWhileALeadWaits() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 8 ether, 2, 0, 30);
+        vm.prank(hunter);
+        (, bytes32 r) = reg.submitLead(id, sweeper, deposit);
+        vm.expectRevert(LastSeenRegistry.WrongStatus.selector);
+        reg.payTip(id, bytes32("t"), address(this), 8 ether);
+        _deliver(r, true);
+        assertEq(imd.balanceOf(hunter), 10 ether + 2 ether); // stake back and a quarter of 8
+    }
+
+    function test_leadToAContractOrBackToTheVictimIsRefused() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 4 ether, 2, 0, 30);
+        vm.startPrank(hunter);
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.submitLead(id, sweeper, address(imd)); // a token contract, a router or a pool is not where the thief went
+        vm.expectRevert(LastSeenRegistry.BadInput.selector);
+        reg.submitLead(id, sweeper, victim);
+        vm.stopPrank();
+    }
+
+    function test_poolPaysOncePerSuspectAndCannotBeSpammed() public {
+        reg.donate(20 ether);
+        address stranger = address(0x5);
+        vm.startPrank(stranger); // holds no IMD at all
+        uint256 a = reg.openCase(victim, sweeper, 8453, 100, 200);
+        reg.requestVerdict(a);
+        uint256 b = reg.openCase(address(0xB1), sweeper, 8453, 100, 200);
+        vm.expectRevert(); // same suspect again: the pool has paid for it, and the stranger cannot pay
+        reg.requestVerdict(b);
+        for (uint160 k = 1; k < 10; k++) reg.requestVerdict(reg.openCase(victim, address(0x9000 + k), 8453, 100, 200));
+        uint256 c = reg.openCase(victim, address(0x9999), 8453, 100, 200);
+        vm.expectRevert(); // the eleventh free verdict of the day
+        reg.requestVerdict(c);
+        vm.stopPrank();
+        assertEq(reg.pool(), 20 ether - 10 * PRICE);
+    }
+
+    function test_noFundingAnEndedHunt() public {
+        (uint256 id,) = _confirmed();
+        reg.postBounty(id, 1 ether, 1, 0, 7);
+        vm.warp(block.timestamp + 8 days);
+        vm.expectRevert(LastSeenRegistry.WrongStatus.selector);
+        reg.fundBounty(id, 1 ether);
+    }
+
     function test_bodyIsValidJsonShape() public {
         (uint256 id,) = _openAndAsk();
         string memory body = reg.verdictBody(id);

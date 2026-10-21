@@ -46,6 +46,7 @@ contract LastSeenRegistry is EIP712, Ownable {
         uint64 askedAt;
         Status status;
         uint256 bounty;     // IMD reward left for hunters
+        bytes32 request;    // the oracle request whose answer settles this case; an earlier one no longer counts
     }
 
     struct Hunt {
@@ -78,17 +79,21 @@ contract LastSeenRegistry is EIP712, Ownable {
         uint256 id;
     }
 
-    // the oracle connection: owner settings, so a new oracle version needs no redeploy
-    IIntake public intake;
-    bytes32 public action;
-    IERC20 public asset;
-    uint256 public price;
-    address public attester;
+    // the oracle connection, fixed at deployment: nobody, the owner included, can point it at another contract or key.
+    // A new oracle version means a new registry.
+    IIntake public immutable intake;
+    bytes32 public immutable action;
+    IERC20 public immutable asset;
+    uint256 public immutable price;
+    address public immutable attester;
     uint16 public panelSize = 5;
     uint16 public quorum = 4;
     uint256 public auditFee;  // on top of the swarm's price; goes to the pool
 
     uint256 public pool;     // IMD anyone can donate so that verdicts are free for victims
+    uint16 public constant POOL_PER_DAY = 10;              // free verdicts the pool pays in one day, so it cannot be drained by spam
+    mapping(address => bool) public poolPaidFor;           // a suspect the pool has already paid a verdict for
+    mapping(uint256 => uint16) public poolUsedOn;          // day number => free verdicts paid that day
     // chains the oracle can read evidence on; a question about any other chain is refused and the 0.5 IMD is lost
     mapping(uint64 => bool) public supportedChain;
     Case[] internal _cases;
@@ -135,6 +140,7 @@ contract LastSeenRegistry is EIP712, Ownable {
         price = price_;
         attester = attester_;
         auditFee = price_;
+        if (address(intake_) == address(0) || address(asset_) == address(0) || attester_ == address(0) || price_ == 0) revert BadInput();
         uint64[5] memory ids = [uint64(1), 56, 4663, 8453, 42161];
         for (uint256 i; i < ids.length; i++) supportedChain[ids[i]] = true;
     }
@@ -144,7 +150,7 @@ contract LastSeenRegistry is EIP712, Ownable {
     function openCase(address wallet, address suspect, uint64 chainId, uint64 fromBlock, uint64 toBlock) external returns (uint256 id) {
         if (wallet == address(0) || suspect == address(0) || wallet == suspect || !supportedChain[chainId] || fromBlock >= toBlock) revert BadInput();
         id = _cases.length;
-        _cases.push(Case(wallet, suspect, msg.sender, chainId, fromBlock, toBlock, 0, Status.Open, 0));
+        _cases.push(Case(wallet, suspect, msg.sender, chainId, fromBlock, toBlock, 0, Status.Open, 0, bytes32(0)));
         emit CaseOpened(id, wallet, suspect, chainId, fromBlock, toBlock);
     }
 
@@ -152,11 +158,13 @@ contract LastSeenRegistry is EIP712, Ownable {
     /// A case can be asked again if the last answer never arrived (after a day) or the panel could not agree.
     function requestVerdict(uint256 caseId) external returns (bytes32 requestId) {
         Case storage c = _cases[caseId];
-        bool retry = c.status == Status.NoAnswer || (c.status == Status.Asked && block.timestamp > c.askedAt + 1 days);
+        bool retry = c.status == Status.Asked && block.timestamp > c.askedAt + 1 days;
         if (c.status != Status.Open && !retry) revert WrongStatus();
-        bool fromPool = _pay();
+        if (retry) delete pending[c.request]; // the unanswered question is withdrawn: its answer will be refused
+        bool fromPool = _pay(c.suspect);
         requestId = _ask(_verdictBody(c));
         pending[requestId] = Pending(1, caseId);
+        c.request = requestId;
         c.status = Status.Asked;
         c.askedAt = uint64(block.timestamp);
         emit VerdictAsked(caseId, requestId, fromPool);
@@ -170,6 +178,8 @@ contract LastSeenRegistry is EIP712, Ownable {
         Case storage c = _cases[caseId];
         Hunt storage h = hunts[caseId];
         if (c.status == Status.None || c.status == Status.Rejected) revert WrongStatus();
+        // a stranger must not be able to take the hirer's seat on someone else's case
+        if (msg.sender != c.opener && msg.sender != c.wallet) revert NotHirer();
         if (h.hirer != address(0) && h.hirer != msg.sender) revert NotHirer();
         if (days_ < 7 || days_ > 365 || (h.hirer == address(0) && checks == 0)) revert BadInput();
         uint256 fees = uint256(checks) * price;
@@ -186,7 +196,7 @@ contract LastSeenRegistry is EIP712, Ownable {
     /// Anyone can add to the reward of a case that has a hunt.
     function fundBounty(uint256 caseId, uint256 amount) external {
         Case storage c = _cases[caseId];
-        if (hunts[caseId].hirer == address(0) || c.status == Status.Rejected || amount == 0) revert WrongStatus();
+        if (hunts[caseId].hirer == address(0) || block.timestamp > hunts[caseId].openUntil || c.status == Status.Rejected || amount == 0) revert WrongStatus();
         asset.safeTransferFrom(msg.sender, address(this), amount);
         c.bounty += amount;
         emit BountyFunded(caseId, amount, c.bounty);
@@ -195,7 +205,7 @@ contract LastSeenRegistry is EIP712, Ownable {
     /// An on-chain lead: funds went from `from` to `to`. `from` must be the suspect or an address the confirmed trail reached.
     function submitLead(uint256 caseId, address from, address to) external returns (uint256 leadId, bytes32 requestId) {
         Case storage c = _cases[caseId];
-        if (to == address(0) || to == from || _claimed[caseId][to] || (from != c.suspect && !reached[caseId][from])) revert BadInput();
+        if (to == address(0) || to == from || to == c.wallet || to.code.length != 0 || _claimed[caseId][to] || (from != c.suspect && !reached[caseId][from])) revert BadInput();
         _claimed[caseId][to] = true;
         leadId = _newLead(caseId, from, to, 1);
         requestId = _askForHunt(leadId, _leadBody(c, from, to));
@@ -217,6 +227,7 @@ contract LastSeenRegistry is EIP712, Ownable {
     function payTip(uint256 caseId, bytes32 tipId, address to, uint256 amount) external {
         Case storage c = _cases[caseId];
         if (msg.sender != hunts[caseId].hirer) revert NotHirer();
+        if (hunts[caseId].inFlight != 0) revert WrongStatus(); // a waiting lead is owed a quarter of what is there now
         if (to == address(0) || amount == 0 || amount > c.bounty) revert BadInput();
         c.bounty -= amount;
         asset.safeTransfer(to, amount);
@@ -294,6 +305,7 @@ contract LastSeenRegistry is EIP712, Ownable {
         bool yes = _accept(a, signature);
         if (p.kind == 1) {
             Case storage c = _cases[p.id];
+            if (c.request != requestId || c.status != Status.Asked || a.chainId != c.chainId) revert UnknownRequest();
             c.status = yes ? Status.Confirmed : Status.Rejected;
             if (yes) {
                 flagged[c.suspect] = true;
@@ -346,9 +358,12 @@ contract LastSeenRegistry is EIP712, Ownable {
         emit PoolFunded(msg.sender, amount, pool);
     }
 
-    function _pay() internal returns (bool fromPool) {
-        if (pool >= price) {
+    function _pay(address suspect) internal returns (bool fromPool) {
+        uint256 day = block.timestamp / 1 days;
+        if (pool >= price && !poolPaidFor[suspect] && poolUsedOn[day] < POOL_PER_DAY) {
             pool -= price;
+            poolPaidFor[suspect] = true;
+            poolUsedOn[day]++;
             return true;
         }
         asset.safeTransferFrom(msg.sender, address(this), price);
@@ -444,16 +459,6 @@ contract LastSeenRegistry is EIP712, Ownable {
     function auditBody(uint64 chainId, address target) external view returns (string memory) { return string(_auditBody(chainId, target)); }
 
     // ---------------------------------------------------------------- owner settings
-
-    function setOracle(IIntake intake_, bytes32 action_, IERC20 asset_, uint256 price_, address attester_) external onlyOwner {
-        // donated, bounty and prepaid IMD stay in the old token, so the token itself can only change while the contract holds none
-        if (address(asset_) != address(asset) && asset.balanceOf(address(this)) != 0) revert BadInput();
-        intake = intake_;
-        action = action_;
-        asset = asset_;
-        price = price_;
-        attester = attester_;
-    }
 
     function setAuditFee(uint256 fee) external onlyOwner {
         auditFee = fee;

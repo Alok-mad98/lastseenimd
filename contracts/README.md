@@ -9,12 +9,12 @@ LastSeenIMD (https://lastseen-4pu.pages.dev) finds stolen keys, sweepers and dra
 **The case**
 
 1. **Open a case** (free). Anyone says: "address S has been taking funds out of wallet W on chain C, between blocks A and B."
-2. **Ask for a verdict.** The contract pays 0.5 IMD to IdentityMD's Intake and asks one yes/no question that the agents answer from chain data. The fee comes from a shared pool when it has funds, so victims pay nothing. At least 4 of 5 agents must agree, and the answer comes back signed (EIP-712, domain "IdentityMD Oracle" v2).
+2. **Ask for a verdict.** The contract pays 0.5 IMD to IdentityMD's Intake and asks one yes/no question that the agents answer from chain data. The fee comes from a shared pool when it has funds, so victims pay nothing; the pool pays once per suspect and for at most 10 verdicts a day, so spam cannot drain it. At least 4 of 5 agents must agree, and the answer comes back signed (EIP-712, domain "IdentityMD Oracle" v2).
 3. **Only a signed "yes" counts.** It puts S on `flagged` and W on `compromised`. Any wallet, app or exchange can read both for free before sending funds.
 
 **The hunt: victims hire hunters, the swarm judges**
 
-4. **Post a bounty** (`postBounty`). The victim puts up a reward in IMD and prepays the swarm's fee for a number of checks (0.5 IMD each), and publishes the hash of a public key for private tips. One hirer per case; it stays open 7 to 365 days.
+4. **Post a bounty** (`postBounty`). The victim puts up a reward in IMD and prepays the swarm's fee for a number of checks (0.5 IMD each), and publishes the hash of a public key for private tips. Only the case's opener or the robbed wallet can hire, one hirer per case; it stays open 7 to 365 days.
 5. **Hunters bring leads from any wallet**, with no name or account:
    - `submitLead`: one on-chain hop, "S (or an address the trail already reached) sent the money to L". The swarm checks it from chain data.
    - `submitLink`: a public page that ties the thief to an account, exchange deposit or person. The swarm's panel reads the page.
@@ -32,8 +32,10 @@ LastSeenIMD (https://lastseen-4pu.pages.dev) finds stolen keys, sweepers and dra
 - Cases and audits can only name chains the oracle reads: Ethereum, BNB Chain, Robinhood Chain, Base and Arbitrum. A question about any other chain would be refused after payment, so it is refused before.
 - A hop already confirmed or waiting cannot be submitted again, and a page can be submitted once per case, so nobody is paid twice for the same lead.
 - A link must be `https://` with printable characters only and no quotes or backslashes, so it cannot change the question the swarm reads.
-- Only the hirer can pay private tips or close the bounty, and only after its end date with no lead waiting.
-- The owner can update the oracle settings and the audit fee (IdentityMD versions its settings), but cannot change the token while the contract holds any, and has no way to withdraw the pool, rewards, prepaid checks or stakes.
+- Only the hirer can pay private tips (never while a lead is being judged) or close the bounty (only after its end date with no lead waiting).
+- A hop lead cannot point back to the victim or at a contract: routers, pools and exchange hot wallets are not where a thief chose to send the money.
+- Each case remembers which oracle request is current: a retried question withdraws the old one, and an answer for a settled case or another chain is refused.
+- The oracle connection (Intake, action, IMD token, price, attester) is fixed at deployment. Nobody, the owner included, can point the contract at another oracle or key. The owner can only change the audit fee, the chains questions may name, and the panel size, and has no way to withdraw the pool, rewards, prepaid checks or stakes.
 
 ## Tests
 
@@ -41,7 +43,7 @@ LastSeenIMD (https://lastseen-4pu.pages.dev) finds stolen keys, sweepers and dra
 forge test
 ```
 
-20 tests run against a mock Intake that gives each callback 200,000 gas, as IdentityMD does: confirmed and rejected verdicts, forged signatures, signatures made for another contract, panels below quorum, calls not from the Intake, replays, the free pool, the hop-by-hop hunt paid from prepaid checks, a wrong lead paying for its own check, double claims, page leads, unsafe links, tips and closing by the hirer only, stakes returned when the swarm never answers, the paid audit feeding the pool, and the callback selector `0x510379c7`. `Bodies.t.sol` prints the exact questions.
+28 tests run against a mock Intake that gives each callback 200,000 gas, as IdentityMD does: confirmed and rejected verdicts, forged signatures, signatures made for another contract, panels below quorum, calls not from the Intake, replays, the free pool, the hunt, wrong leads, double claims, page leads, unsafe links, tips, stakes, the paid audit, and the callback selector `0x510379c7`. Eight more prove the fixes from IdentityMD's review of the first launch: the runtime fits the 24,576-byte EIP-170 limit (18,936 bytes with the optimizer and via-IR), a stale verdict after a retry is refused, an answer for another chain is refused, a stranger cannot take the hirer's seat, the hirer cannot empty the reward while a lead waits, a lead to a contract or back to the victim is refused, the pool cannot be drained by spam, and an ended hunt takes no new money. `Bodies.t.sol` prints the exact questions.
 
 Every question was run through IdentityMD's free `POST /requests/check`: the case verdict on 14 Oct 2026 and the page lead and the audit on 21 Oct 2026, with no wording blockers.
 

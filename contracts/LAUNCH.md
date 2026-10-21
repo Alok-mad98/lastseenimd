@@ -18,7 +18,7 @@ Open https://explorer.imd.fun/launch → **Launch a company** → choose **Contr
 > 4. `asset_`: 0x5F7Bb59365ce557C26dbcAa4EE9d39A4b95B7127
 > 5. `price_`: 500000000000000000
 > 6. `attester_`: 0x5598Aa9146215Bc13eb26f2c692Ad1461Fd32982
-> Do not change the contract's logic. It already has 20 passing Foundry tests (`forge test`).
+> Do not change the contract's logic. It has 29 passing Foundry tests (`forge test`), and its runtime is 18,936 bytes with the optimizer and via-IR set in foundry.toml.
 
 ## 3. Read the check
 

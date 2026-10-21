@@ -2,5 +2,11 @@
 src = "src"
 out = "out"
 libs = ["lib"]
+solc = "0.8.33"
 # IdentityMD launches require it: deployed bytecode carries no metadata hash
 bytecode_hash = "none"
+# The question texts are long string builders; without the optimizer the registry is 35.7 KB, over the 24,576-byte
+# EIP-170 limit every chain enforces. With it, and via-IR (the legacy pipeline runs out of stack on those builders), it is under 20 KB.
+optimizer = true
+optimizer_runs = 200
+via_ir = true

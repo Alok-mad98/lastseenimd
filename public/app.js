@@ -86,7 +86,7 @@
       await intro;
       D = d; T = null; rendered = {};
       EXP = {}; CN = {}; CID = {}; d.allChains.concat(d.chains).forEach(c => { EXP[c.key] = c.explorer; CN[c.key] = c.name; CID[c.key] = c.id; });
-      const sw0 = d.compromise.sweeper, busiest = d.chains.filter(c => c.ok).sort((a, b) => (b.outCount + b.inCount) - (a.outCount + a.inCount))[0];
+      const sw0 = d.compromise.sweeper || d.compromise.keySweep, busiest = d.chains.filter(c => c.ok).sort((a, b) => (b.outCount + b.inCount) - (a.outCount + a.inCount))[0];
       MAIN = sw0 ? sw0.chains[0] : d.incident ? d.incident.chain : busiest ? busiest.key : "eth";
       verdict(d); opinion(d); swarm(d);
       history.replaceState(null, "", "?a=" + address);
@@ -111,7 +111,8 @@
     const end = {}; a.endpoints.concat(b.endpoints).forEach(o => { const e = end[o.kind] || (end[o.kind] = { kind: o.kind, usd: 0, count: 0 }); e.usd += o.usd; e.count += o.count; });
     let compromise = { ...a.compromise, delegations: a.compromise.delegations.concat(b.compromise.delegations), poisoning: a.compromise.poisoning.concat(b.compromise.poisoning), level: LV[Math.max(LV.indexOf(a.compromise.level), LV.indexOf(b.compromise.level))] };
     let sweeps = a.sweeps.concat(b.sweeps).sort((x, y) => y.ts - x.ts).slice(0, 60), story = a.story;
-    if (!sw && sw2) { compromise.sweeper = sw2; story = b.story; }
+    if (!a.compromise.keySweep && b.compromise.keySweep && !sw) { compromise.keySweep = b.compromise.keySweep; story = b.story; }
+    if (!sw && sw2) { compromise.sweeper = sw2; compromise.keySweep = null; story = b.story; }
     else if (sw && sw2 && sw.address === sw2.address) compromise.sweeper = { ...sw, chains: [...new Set(sw.chains.concat(sw2.chains))], allChains: [...new Set(sw.allChains.concat(sw2.allChains))], totalCount: sw.totalCount + sw2.totalCount, totalUsd: sw.totalUsd + sw2.totalUsd, type4: sw.type4 || sw2.type4, swarmCase: sw.swarmCase || sw2.swarmCase };
     else if (sw && sw2) sweeps = a.sweeps; // a different sweeper elsewhere: the first one found leads the story
     const tA = a.totals, tB = b.totals;
@@ -147,6 +148,7 @@
     const v = $("verdict"), c = d.compromise, sw = c.sweeper;
     v.hidden = false;
     if (sw) { v.className = "verdict"; v.innerHTML = `<h2>COMPROMISED</h2><p>${aLink(sw.address, null, sw.chains[0])} takes funds out of this wallet by itself${sw.type4 ? ", using signatures made with this wallet's private key" : ""}. ${sw.totalCount} transfers so far on ${sw.allChains.map(chip).join(" ")}. Anything you send here will be taken.</p>`; }
+    else if (c.keySweep) { const k = c.keySweep; v.className = "verdict"; v.innerHTML = `<h2>DRAINED WITH YOUR KEY</h2><p>On ${when(k.first)} UTC the coins on ${k.chains.map(chip).join(" ")} went to ${aLink(k.address)}, a new address, within hours${k.legacy ? ", using a transaction format your wallet does not normally use" : ""}. They were signed with this wallet's key: someone else has it. Anything you send here can be taken.</p>`; }
     else if (c.level === "suspected") { v.className = "verdict warn"; v.innerHTML = `<h2>CHECK THIS</h2><p>The wallet is delegated to a contract I do not recognise on ${c.delegations.filter(x => !x.name).map(x => chip(x.chain)).join(" ")}. If you did not set that up, someone else controls the wallet.</p>`; }
     else if (d.incident) { v.className = "verdict warn"; v.innerHTML = `<h2>POSSIBLE DRAIN</h2><p>Several assets left for one address within an hour. See “The night it happened”.</p>`; }
     else { v.className = "verdict ok"; v.innerHTML = `<h2>NO THEFT FOUND</h2><p>No sweeper, no unknown delegation, no drain pattern on ${d.chains.filter(x => x.ok).length} chains. That is not a guarantee: I only read the most recent transfers.</p>`; }
@@ -249,7 +251,7 @@
   function todo(d) {
     const s = [], sw = d.compromise.sweeper, comp = d.compromise.level !== "none";
     if (comp) s.push("<b>Stop sending funds to this wallet.</b> The attacker has the private key, so revoking permissions or changing a password does not help.");
-    if (comp || (d.incident && d.incident.method === "key")) s.push("Create a new wallet with a new seed phrase on a clean device. Use that from now on.");
+    if (comp || d.compromise.keySweep || (d.incident && d.incident.method === "key")) s.push("Create a new wallet with a new seed phrase on a clean device. Use that from now on.");
     if (comp) s.push('If something valuable is still stuck here (staked tokens, an airdrop, NFTs), a normal transfer will be front-run by the sweeper. A rescue has to happen in one protected transaction. <a href="https://antidrain.dev" target="_blank" rel="noopener">Antidrain</a> is a free tool built for this; read how it works before you use it.');
     if (sw) s.push(`Save the evidence: the sweeper address ${short(sw.address)} and the transaction links under “The night it happened”.`);
     else if (d.incident) s.push(`Save the evidence: the receiving address ${short(d.incident.to)} and the transaction links in “The night it happened”.`);
@@ -295,7 +297,13 @@
 
   function incident() {
     const i = D.incident, n = $("inc-note"), sw = D.compromise.sweeper, po = D.compromise.poisoning;
-    $("sweep-box").hidden = !sw; $("poison-box").hidden = !po.length;
+    const ks = !sw && D.compromise.keySweep;
+    $("sweep-box").hidden = !sw && !ks; $("poison-box").hidden = !po.length;
+    if (ks) {
+      $("sweep-note").innerHTML = `<b>Emptied with the wallet's own key: ${aLink(ks.address, ks.address)}</b><br>${ks.count} transfers on ${ks.chains.map(chip).join(" ")} between ${when(ks.first)} and ${when(ks.last)} UTC, to an address this wallet had never paid before.${ks.legacy ? " “Legacy” means an older transaction format this wallet does not normally use, typical of a script holding a stolen key." : ""}`;
+      empty("c-sweeps", "");
+      $("sweep-table").innerHTML = `<div class="tw"><table><tr><th>Time (UTC)</th><th>Chain</th><th>Asset</th><th class="n">Amount</th><th>Format</th><th>Transaction</th></tr>` + ks.items.map(x => `<tr><td>${when(x.ts)}</td><td>${chip(x.c)}</td><td>${esc(x.a)}</td><td class="n">${Number(x.v).toLocaleString("en-US", { maximumFractionDigits: 8 })}</td><td>${x.t === 0 ? '<span class="tag bad">legacy</span>' : x.t == null ? "not checked" : "type " + x.t}</td><td><a href="${exT(x.h, x.c)}" target="_blank" rel="noopener">${short(x.h)}</a></td></tr>`).join("") + `</table></div>`;
+    }
     if (sw) {
       $("sweep-note").innerHTML = `<b>The sweeper: ${aLink(sw.address, sw.address, sw.chains[0])}</b><br>First seen ${when(sw.first)} UTC, last seen ${when(sw.last)} UTC. “The receiver” in the table means the sweeper sent the transaction itself; you never clicked anything. “7702” means it used a signature only this wallet's private key can make.`;
       const pts = D.sweeps.filter(x => x.ts).reverse(); // a few chains return transfers without a time
@@ -327,7 +335,7 @@
   }
 
   async function trail() {
-    const i = D.incident, sw = D.compromise.sweeper, from = sw ? sw.address : i ? i.to : D.address, tc = sw ? sw.chains[0] : i ? i.chain : MAIN, since = sw ? sw.first : i ? i.start : 0, n = $("trail-note");
+    const i = D.incident, ks = D.compromise.keySweep, sw = D.compromise.sweeper || (ks && { address: ks.address, chains: ks.chains, first: ks.first }), from = sw ? sw.address : i ? i.to : D.address, tc = sw ? sw.chains[0] : i ? i.chain : MAIN, since = sw ? sw.first : i ? i.start : 0, n = $("trail-note");
     n.className = "note"; n.textContent = "Following the money…";
     try {
       T = await (await fetch(`/api/trace?address=${from}&since=${since}&chain=${tc}`)).json();

@@ -125,6 +125,12 @@ For the latest outgoing transactions on each chain, read who actually signed the
 
 Group every counterparty by its first 4 and last 4 hex characters. Two different addresses with the same ends, where one carries almost no value, means a look-alike was planted in the history.
 
+### Step 4b — The key sweep (`findKeySweep`)
+
+A thief who holds the private key signs ordinary transactions as the wallet, so the signer test sees the owner. The giveaway is the sweep: the native coin on **two or more chains** going to **one address the wallet never paid before**, within 12 hours, at the end of its activity on each chain. On its own that could be the owner moving to a new wallet, so it also needs a second sign: an unknown delegation, the older **legacy transaction format** the owner does not normally use (scripts send it, wallet apps do not), or three or more chains.
+
+A second real victim, `0x7cec…6614`, scored 60 before this rule (unknown delegations only) and **97** after: its coins on Polygon, BNB Chain, Ethereum, Arbitrum and Base went to `0xf111…8008` in five legacy transactions within one hour. Vitalik's wallet and a Binance hot wallet are still not flagged.
+
 ### Step 5 — The burst test (`findIncidents`)
 
 Three or more different assets leaving for **one** unlabelled address within an hour, worth over $100 — the usual shape of an approval or permit drain.
@@ -382,6 +388,7 @@ The Alchemy key needs the networks you want enabled in the Alchemy dashboard; ch
 | **11 Oct** | A real compromised wallet scored 0 → rebuilt as multi-chain signer forensics: sweepers, 7702 delegations, poisoning (scored 97). GLM 5.3 + SubQ, contract audits, Privy, sound, opening card, 28-chain discovery, revoke, deposit-address detection |
 | **11 Oct** | Launch film: Blender shots, HyperFrames composition, scored soundtrack, logo |
 | **14 Oct** | LastSeenRegistry (swarm verdicts + hop-by-hop bounties, 13 tests, question accepted by IMD's checker), Solana scan, X/ENS/Farcaster lookups, rate limits, the man on the title screen |
+| **21 Oct** | The key sweep: a second real victim went from 60 to 97 |
 | **21 Oct** | The hunt (prepaid swarm checks, staked leads, page leads, sealed anonymous tips), the audit desk (pasted Solidity + paid swarm audit), every active chain read, Arkham links, 20 tests |
 
 ---

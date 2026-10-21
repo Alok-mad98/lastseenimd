@@ -54,7 +54,7 @@ export async function onRequestGet(ctx) {
     ]);
     const approvals = apLists.some(l => l) ? apLists.filter(Boolean).flat() : (active.length ? null : []);
     const tx = Object.assign({}, ...txMaps);
-    for (const x of out) { const d = tx[x.hash]; if (d) { x.signer = d.from.toLowerCase(); x.type4 = d.type === "0x4"; } }
+    for (const x of out) { const d = tx[x.hash]; if (d) { x.signer = d.from.toLowerCase(); x.type4 = d.type === "0x4"; x.txType = parseInt(d.type || "0x0", 16); } }
 
     // 3. who this wallet sends to / receives from
     const agg = list => {
@@ -69,8 +69,8 @@ export async function onRequestGet(ctx) {
     const sent = agg(out), received = agg(inn);
     for (const c of sent.concat(received)) if (c.first === Infinity) c.first = c.last || null; // some chains return no timestamps
     const sweep = findSweeper(out, address, new Set(chains.filter(c => c.delegate && !c.delegateName).map(c => c.key))), poison = findPoisoning(out, sent);
-    const candidates = findIncidents(out, address);
-    const want = [...new Set(sent.slice(0, 50).map(c => c.address).concat(received.slice(0, 25).map(c => c.address), candidates.map(c => c.to), sweep.map(s => s.address), (approvals || []).slice(0, 40).map(a => a.spender)))];
+    const candidates = findIncidents(out, address), keySweeps = findKeySweep(out, address, chains.filter(c => c.delegate && !c.delegateName).length);
+    const want = [...new Set(sent.slice(0, 50).map(c => c.address).concat(received.slice(0, 25).map(c => c.address), candidates.map(c => c.to), sweep.map(s => s.address), keySweeps.map(k => k.address), (approvals || []).slice(0, 40).map(a => a.spender)))];
     const lab = await t.step("address_labels", { addresses: want.length }, () => labels(env, request, want));
     const tag = c => Object.assign(c, lab[c.address] ? { kind: lab[c.address].kind, name: lab[c.address].name } : { kind: "unknown", name: null });
     sent.forEach(tag); received.forEach(tag);
@@ -81,6 +81,9 @@ export async function onRequestGet(ctx) {
     // a sweeper pulls funds out with its own transactions; a labelled service doing that is a relayer, not a thief
     const sweeper = sweep.find(s => !lab[s.address] || !OWN_USE.includes(lab[s.address].kind)) || null;
     const strange = chains.filter(c => c.delegate && !c.delegateName);
+    // the wallet's own key emptying it across chains: only to an address no public label explains
+    const keySweep = sweeper ? null : keySweeps.find(k => !lab[k.address]) || null;
+    if (keySweep) { const c = sent.find(x => x.address === keySweep.address); if (c) { c.kind = "bad"; c.name = "Emptied the wallet with its key"; } }
     if (strange.length) {
       const ver = await Promise.all(strange.map(c => t.step("sourcify_lookup", { chain: c.key, address: c.delegate }, () => fetch("https://sourcify.dev/server/v2/contract/" + chainOf(c.key).id + "/" + c.delegate).then(r => r.json()).then(j => !!j.match).catch(() => null))));
       strange.forEach((c, i) => c.delegateVerified = ver[i]);
@@ -103,8 +106,8 @@ export async function onRequestGet(ctx) {
       }
     }
     const compromise = {
-      level: sweeper && (sweeper.type4 || strange.length) ? "confirmed" : sweeper ? "likely" : strange.length ? "suspected" : "none",
-      sweeper, delegations: chains.filter(c => c.delegate).map(c => ({ chain: c.key, chainName: c.name, delegate: c.delegate, name: c.delegateName, verified: c.delegateVerified == null ? null : c.delegateVerified })), poisoning: poison,
+      level: (sweeper || keySweep) && (sweeper && sweeper.type4 || strange.length) ? "confirmed" : sweeper || keySweep ? "likely" : strange.length ? "suspected" : "none",
+      sweeper, keySweep, delegations: chains.filter(c => c.delegate).map(c => ({ chain: c.key, chainName: c.name, delegate: c.delegate, name: c.delegateName, verified: c.delegateVerified == null ? null : c.delegateVerified })), poisoning: poison,
     };
 
     // a burst of several assets leaving at once, on top of the sweeper check; moving funds to a labelled service is ordinary use
@@ -173,6 +176,29 @@ function findPoisoning(out, sent) {
   return pairs.sort((a, b) => b.last - a.last).slice(0, 20);
 }
 
+// A stolen key used directly looks like the owner: same signer, ordinary transactions. What gives it away is the sweep: the native coin
+// on several chains going to one new address within hours, at the end of the wallet's activity there. On its own that could be the owner
+// moving to a new wallet, so it also needs an unknown delegation, the older transaction format the owner does not normally use, or 3+ chains.
+function findKeySweep(out, self, strangeCount) {
+  const native = out.filter(x => x.cat === "external" && x.to !== self && !BURN.includes(x.to) && x.ts);
+  const lastOn = {}; out.forEach(x => { if (x.ts) lastOn[x.chain] = Math.max(lastOn[x.chain] || 0, x.ts); });
+  const typed = out.filter(x => x.txType != null && x.signer === self), legacyShare = typed.length ? typed.filter(x => x.txType === 0).length / typed.length : 0;
+  const by = {}; native.forEach(x => (by[x.to] = by[x.to] || []).push(x));
+  const found = [];
+  for (const to in by) {
+    const l = by[to].filter(x => x.ts >= lastOn[x.chain] - 2 * 86400).sort((a, b) => a.ts - b.ts);
+    if (!l.length) continue;
+    const win = l.filter(x => x.ts <= l[0].ts + 12 * 3600), chains = [...new Set(win.map(x => x.chain))];
+    if (chains.length < 2) continue;
+    if (out.some(x => x.to === to && x.ts && x.ts < l[0].ts - 86400)) continue; // a regular counterparty, not a new address
+    const legacy = win.some(x => x.txType === 0) && legacyShare < 0.5;
+    if (!strangeCount && !legacy && chains.length < 3) continue;
+    found.push({ address: to, chains, count: win.length, usd: Math.round(win.reduce((a, x) => a + x.usd, 0) * 100) / 100, first: l[0].ts, last: win[win.length - 1].ts, legacy,
+      items: win.map(x => ({ h: x.hash, ts: x.ts, c: x.chain, a: x.asset, v: x.value, u: Math.round(x.usd * 100) / 100, t: x.txType })) });
+  }
+  return found.sort((a, b) => b.chains.length - a.chains.length || b.count - a.count);
+}
+
 // A drain can also look like many different assets leaving for one address in a short time.
 function findIncidents(out, self) {
   const by = {};
@@ -202,7 +228,7 @@ function scoreRisk({ incident, compromise, approvals, flags, sent }) {
   const strange = compromise.delegations.filter(d => !d.name).length;
   const parts = {
     "Key compromised": { confirmed: 100, likely: 85, suspected: 55, none: 0 }[compromise.level],
-    "Past drain": incident ? 100 : 0,
+    "Past drain": incident || compromise.keySweep ? 100 : 0,
     "Risky approvals": Math.min(100, risky * 50 + closed * 10),
     "Open allowances": Math.min(100, unlimited * 12),
     "Unknown delegation": Math.min(100, strange * 40),
@@ -253,7 +279,13 @@ function story({ incident, compromise, approvals, flags, risk, out, inn, chains 
     if (sw.type4) s.push("It used an EIP-7702 transaction to do it. That needs a signature made with this wallet's private key, so the attacker has the key or the seed phrase. Revoking approvals will not fix this.");
     else s.push("You did not sign those transactions. Someone else can move this wallet's funds.");
   }
-  if (strange.length) s.push(`${sw ? "The wallet is also" : "This wallet is"} delegated to a contract I do not recognise on ${names(strange.map(d => d.chainName))}${strange.length > 1 && new Set(strange.map(d => d.delegate)).size > 1 ? ", a different one on each chain" : ""}. A delegate contract can act as the wallet. ${sw ? "That is how incoming funds get swept." : "If you did not set this up, treat the wallet as compromised."}`);
+  const ks = compromise.keySweep;
+  if (ks) {
+    s.push("This wallet was emptied with its own key. Do not send anything to it.");
+    s.push(`On ${when(ks.first)}, its ${names([...new Set(ks.items.map(x => x.a))])} on ${names(ks.chains.map(cn))} went to one new address ending ${ks.address.slice(-4)}, ${ks.count} transfer${ks.count > 1 ? "s" : ""} within ${Math.max(1, Math.round((ks.last - ks.first) / 3600))} hour${Math.round((ks.last - ks.first) / 3600) > 1 ? "s" : ""}, at the end of the wallet's activity on each chain.`);
+    s.push((ks.legacy ? "They used an older transaction format this wallet does not normally use: the mark of a script holding the key, not a wallet app. " : "") + "They were signed with this wallet's key, so the attacker has the key or the seed phrase. If you moved everything to a new wallet yourself that day, ignore this.");
+  }
+  if (strange.length) s.push(`${sw || ks ? "The wallet is also" : "This wallet is"} delegated to a contract I do not recognise on ${names(strange.map(d => d.chainName))}${strange.length > 1 && new Set(strange.map(d => d.delegate)).size > 1 ? ", a different one on each chain" : ""}. A delegate contract can act as the wallet. ${sw ? "That is how incoming funds get swept." : "If you did not set this up, treat the wallet as compromised."}`);
   const known = compromise.delegations.filter(d => d.name);
   if (known.length && !sw) s.push(`It is delegated to ${known[0].name} on ${names(known.map(d => d.chainName))}. That is ordinary wallet software.`);
   if (incident) {

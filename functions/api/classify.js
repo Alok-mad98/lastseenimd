@@ -1,7 +1,7 @@
 import { isAddr, json, chainOf, batch, transferParams, mapTransfers, labels } from "../_lib.js";
 
 // GET /api/classify?chain=arb&addresses=0x…,0x…  →  what kind of address each one is, from how money moves through it.
-//   deposit:   a few wallets pay in, and each payment is passed on within hours to one or two places. Exchanges, Polymarket,
+//   deposit:   a few wallets pay in, and each payment is passed on within hours to a labelled service. Exchanges, Polymarket,
 //              bridges and payment apps give every user one of these. Money sent there is the owner's own deposit, not a theft.
 //   collector: many different wallets pay in. A thief's address that sweeps victims looks like this.
 //   wallet:    anything else.
@@ -24,7 +24,8 @@ export async function onRequestGet({ request, env }) {
       const name = top.filter(([d]) => !/^0x0{36}(0000|dead)$/.test(d)).map(([d]) => lab[d] && lab[d].name).find(Boolean) || null;
       let kind = "wallet";
       if (senders.size >= 10) kind = "collector";
-      else if (senders.size >= 1 && senders.size <= 4 && out.length && main / out.length >= 0.8 && paidIn && passed / paidIn >= 0.7) kind = "deposit";
+      // it must pass the money to a labelled service: a thief's fresh forwarding address passes it to another unknown wallet
+      else if (name && senders.size >= 1 && senders.size <= 4 && out.length && main / out.length >= 0.8 && paidIn && passed / paidIn >= 0.7) kind = "deposit";
       return { address: a, kind, senders: senders.size, service: name, forwardsTo: top.slice(0, 2).map(([d]) => d), isContract: code !== "0x" && !code.startsWith("0xef0100") };
     });
     return json({ chain: chain.key, result });

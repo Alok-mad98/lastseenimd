@@ -172,24 +172,18 @@
     const mine = a => res[a] && res[a].kind === "deposit", label = k => "Your deposit address" + (k.service ? " → " + k.service : "");
     d.sent.forEach(x => {
       const k = res[x.address]; if (!k) return;
-      if (k.kind === "deposit" && !["bad", "poison"].includes(x.kind)) { x.kind = "deposit"; x.name = label(k); d.split.ownUsd += x.usd; d.split.awayUsd = Math.max(0, d.split.awayUsd - x.usd); }
+      if (k.kind === "deposit" && !["bad", "poison"].includes(x.kind) && !(d.incident && d.incident.to === x.address)) { x.kind = "deposit"; x.name = label(k); d.split.ownUsd += x.usd; d.split.awayUsd = Math.max(0, d.split.awayUsd - x.usd); }
       if (k.kind === "collector") x.collector = k.senders;
     });
-    // a finding whose receiver turns out to be the owner's own deposit address is withdrawn
-    const dropped = [];
-    if (c.keySweep && mine(c.keySweep.address)) { dropped.push(c.keySweep.address); c.keySweep = null; }
-    if (c.pull && c.pull.some(p => mine(p.to))) { dropped.push(...c.pull.filter(p => mine(p.to)).map(p => p.to)); c.pull = c.pull.filter(p => !mine(p.to)); }
-    if (d.incident && mine(d.incident.to)) { dropped.push(d.incident.to); d.incident = null; }
-    d.sent.forEach(x => { if (dropped.includes(x.address)) { x.kind = "deposit"; x.name = label(res[x.address]); } });
-    if (dropped.length) {
-      if (!c.sweeper && !c.keySweep) c.level = c.delegations.some(x => !x.name) ? "suspected" : "none";
-      const left = c.sweeper || c.keySweep || (c.pull && c.pull.length) || (c.poisonLoss && c.poisonLoss.length) || d.incident;
-      if (!left) d.risk = { ...d.risk, parts: { ...d.risk.parts, "Past drain": 0 }, score: Math.max(c.level === "suspected" ? 60 : 0, d.risk.score - 40) };
-      d.risk.level = d.risk.score >= 60 ? "high" : d.risk.score >= 25 ? "medium" : "low";
-      d.story = dropped.map(a => `The money sent to ${short(a)} went to your own deposit address${res[a].service ? " for " + res[a].service : ""}: only your wallets ever paid it, and it passed everything straight on. That is your own activity, not a theft.`)
-        .concat(d.story.filter(line => !dropped.some(a => line.includes(a.slice(-4)))).map(line => line.replace(/^Risk score: \d+/, "Risk score: " + d.risk.score)));
-      (d.checks || []).forEach(k => { if (k.id === "keysweep" && !c.keySweep) { k.found = false; k.detail = null; } if (k.id === "pull" && !(c.pull && c.pull.length)) { k.found = false; k.detail = null; } if (k.id === "burst" && !d.incident) { k.found = false; k.detail = null; } });
-    }
+    // a theft finding that points at what looks like a deposit address stays: the pattern is a guess, and a thief can imitate it.
+    // It only gets a note, so the owner can recognise their own deposit.
+    const maybe = [c.keySweep && c.keySweep.address, ...(c.pull || []).map(p => p.to), d.incident && d.incident.to].filter(a => a && mine(a));
+    maybe.forEach(a => {
+      const k = res[a];
+      d.story.splice(1, 0, `Check this one yourself: ${short(a)} looks like a deposit address for ${k.service} (only ${k.senders} wallet${k.senders > 1 ? "s" : ""} ever paid it, and it passed the money straight on). If you made that deposit, this part is your own activity; if not, it is part of the theft.`);
+      const ck = (d.checks || []).find(x => x.found && x.detail && x.detail.includes(a)); if (ck) ck.detail += ` (may be your own deposit into ${k.service})`;
+      const row = d.sent.find(x => x.address === a); if (row) { row.kind = "bad"; row.name = "Possibly your deposit into " + k.service; }
+    });
     if (c.keySweep && res[c.keySweep.address] && res[c.keySweep.address].kind === "collector") {
       c.keySweep.collector = res[c.keySweep.address].senders;
       d.story.splice(3, 0, `The address it went to collects from ${c.keySweep.collector} or more different wallets. That is a thief's collection address, not a new wallet of yours.`);

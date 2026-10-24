@@ -17,7 +17,9 @@ const OWN_USE = ["exchange", "swap", "bridge", "other"]; // labelled services: t
 const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
 // Payments the owner signed and a payment service submitted: the service sends the transaction and is often the one paid,
 // which looks exactly like a sweeper. x402 settles through its Permit2 proxy or USDC's transferWithAuthorization (EIP-3009).
-const SIGNED_PAYMENT_TO = ["0x402085c248eea27d92e8b30b2c58ed07f9e20001"], SIGNED_PAYMENT_SEL = ["0xe3ee160e", "0xef55bec6", "0xcf092995"];
+// Orders the owner signed and someone else filled are trades, not sweeps: OpenSea Seaport 1.5 and 1.6, CoW Protocol, UniswapX, 1inch.
+// (A phished order signature looks the same on chain; the page says what it was so the owner can tell.)
+const SIGNED_PAYMENT_TO = ["0x402085c248eea27d92e8b30b2c58ed07f9e20001", "0x0000000000000068f116a894984e2db1123eb395", "0x00000000000000adc04c56bf30ac9d3c0aaf14dc", "0x9008d19f58aabd9ed0d60971565aa8510560ab41", "0x00000011f84b9aa48e5f8aa8b9897600006289be", "0x6000da47483062a0d734ba3dc7576ce6a0b645c4", "0x111111125421ca6dc452d289314280a0f8842a65"], SIGNED_PAYMENT_SEL = ["0xe3ee160e", "0xef55bec6", "0xcf092995"];
 const signedPayment = x => SIGNED_PAYMENT_TO.includes(x.txTo) || SIGNED_PAYMENT_SEL.includes(x.sel);
 // ERC-4337 EntryPoints (v0.6, v0.7, v0.8): a bundler submits the owner's own smart-account operations. Only on a chain where the
 // wallet is delegated to an unknown contract does a bundler moving funds mean the attacker's code is running.
@@ -54,12 +56,15 @@ export async function onRequestGet(ctx) {
 
     // 2. prices, approvals, flags, and who actually signed the most recent outgoing transactions
     const active = chains.filter(c => c.ok && (c.outCount || c.inCount));
-    const [ethPrice, flags, apLists, txMaps] = await Promise.all([
-      t.step("defillama_prices", { transfers: all.length }, () => priceAll(all)),
+    // prices first: they decide which outgoing transfers get their signer checked
+    const ethPrice = await t.step("defillama_prices", { transfers: all.length }, () => priceAll(all));
+    const [flags, apLists, txMaps] = await Promise.all([
       t.step("goplus_address_security", { address }, () => goplusAddress(address)),
       Promise.all(active.map(c => t.step("goplus_token_approvals", { chain: c.key }, () => goplusApprovals(address, chainOf(c.key).id)).then(l => l && l.map(a => ({ ...a, chain: c.key }))))),
       Promise.all(active.map(c => {
-        const hashes = [...new Set(out.filter(x => x.chain === c.key).map(x => x.hash))].slice(0, 40);
+        // poisoners flood a wallet with fake "outgoing" transfers; real money is checked first, newest first, then the rest
+        const real = x => x.priced && x.usd >= 1 ? 1 : 0;
+        const hashes = [...new Set(out.filter(x => x.chain === c.key).sort((a, b) => real(b) - real(a) || b.ts - a.ts).map(x => x.hash))].slice(0, 40);
         return t.step("eth_getTransactionByHash_batch", { chain: c.key, hashes: hashes.length }, () => batch(env, chainOf(c.key), hashes.map(h => ["eth_getTransactionByHash", [h]])).then(r => Object.fromEntries(hashes.map((h, i) => [h, r[i]]))).catch(() => ({})));
       })),
     ]);
@@ -207,7 +212,7 @@ function findPoisoning(out, sent) {
 // and a third party used it. Chains where the wallet runs known smart-account software are skipped: there a relayer sends the owner's own transactions.
 function findPull(out, self, knownDelegate, strangeChains) {
   return out.filter(x => x.priced && x.usd >= 1 && x.signer && x.signer !== self && x.signer !== x.to && x.to !== self && !BURN.includes(x.to) && !knownDelegate.has(x.chain) && !signedPayment(x) && !(ENTRYPOINTS.includes(x.txTo) && !strangeChains.has(x.chain)))
-    .map(x => ({ to: x.to, chain: x.chain, ts: x.ts, asset: x.asset, value: x.value, usd: x.usd, hash: x.hash, signer: x.signer, txTo: x.txTo, contract: x.contract, how: strangeChains.has(x.chain) ? "the unknown EIP-7702 delegate" : PULL_SELECTORS[x.sel] || (x.txTo === PERMIT2 ? "Permit2" : "a contract call") }));
+    .map(x => ({ to: x.to, chain: x.chain, ts: x.ts, asset: x.asset, value: x.value, usd: x.usd, hash: x.hash, signer: x.signer, txTo: x.txTo, contract: x.contract, how: (x.txTo === x.contract || x.txTo === PERMIT2) && PULL_SELECTORS[x.sel] ? PULL_SELECTORS[x.sel] + " (a permission the wallet gave)" : strangeChains.has(x.chain) ? "the unknown EIP-7702 delegate" : PULL_SELECTORS[x.sel] || (x.txTo === PERMIT2 ? "Permit2" : "a contract call") }));
 }
 function summarisePulls(list) {
   const by = {};

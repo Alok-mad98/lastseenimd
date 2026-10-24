@@ -41,6 +41,7 @@ export const METHODS = [
   { id: "poisonloss", name: "Sent to a poisoned look-alike", how: "Real money went to a fake address planted in the history to look like one the owner uses." },
   { id: "poisoning", name: "Address poisoning attempts", how: "Fake transfers planted look-alike addresses in the history. Harmless until someone copies one." },
   { id: "approvals", name: "Dangerous permissions still open", how: "A contract flagged as malicious, or an unknown one, can still spend tokens from this wallet." },
+  { id: "orders", name: "Signed orders filled by others", how: "A marketplace order or gasless swap the wallet signed was filled by someone else. Your own trade, or a phished signature if you never made it." },
   { id: "flagged", name: "Paid a flagged address", how: "The wallet sent funds to an address publicly labelled as a scam, phisher, mixer or sanctioned." },
 ];
 

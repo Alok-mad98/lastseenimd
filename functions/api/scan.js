@@ -17,9 +17,11 @@ const OWN_USE = ["exchange", "swap", "bridge", "other"]; // labelled services: t
 const PERMIT2 = "0x000000000022d473030f116ddee9f6b43ac78ba3";
 // Payments the owner signed and a payment service submitted: the service sends the transaction and is often the one paid,
 // which looks exactly like a sweeper. x402 settles through its Permit2 proxy or USDC's transferWithAuthorization (EIP-3009).
-// Orders the owner signed and someone else filled are trades, not sweeps: OpenSea Seaport 1.5 and 1.6, CoW Protocol, UniswapX, 1inch.
-// (A phished order signature looks the same on chain; the page says what it was so the owner can tell.)
-const SIGNED_PAYMENT_TO = ["0x402085c248eea27d92e8b30b2c58ed07f9e20001", "0x0000000000000068f116a894984e2db1123eb395", "0x00000000000000adc04c56bf30ac9d3c0aaf14dc", "0x9008d19f58aabd9ed0d60971565aa8510560ab41", "0x00000011f84b9aa48e5f8aa8b9897600006289be", "0x6000da47483062a0d734ba3dc7576ce6a0b645c4", "0x111111125421ca6dc452d289314280a0f8842a65"], SIGNED_PAYMENT_SEL = ["0xe3ee160e", "0xef55bec6", "0xcf092995"];
+const SIGNED_PAYMENT_TO = ["0x402085c248eea27d92e8b30b2c58ed07f9e20001"], SIGNED_PAYMENT_SEL = ["0xe3ee160e", "0xef55bec6", "0xcf092995"];
+// Orders the owner signed that a marketplace filled: OpenSea Seaport 1.5 and 1.6, CoW Protocol, UniswapX, 1inch. A real trade and a
+// phished order signature look the same on chain, so these are neither ignored nor called a sweeper: they get their own finding.
+const ORDER_VENUES = { "0x0000000000000068f116a894984e2db1123eb395": "OpenSea Seaport", "0x00000000000000adc04c56bf30ac9d3c0aaf14dc": "OpenSea Seaport", "0x9008d19f58aabd9ed0d60971565aa8510560ab41": "CoW Protocol", "0x00000011f84b9aa48e5f8aa8b9897600006289be": "UniswapX", "0x6000da47483062a0d734ba3dc7576ce6a0b645c4": "UniswapX", "0x111111125421ca6dc452d289314280a0f8842a65": "1inch" };
+const orderFill = x => !!ORDER_VENUES[x.txTo] && x.signer !== x.from;
 const signedPayment = x => SIGNED_PAYMENT_TO.includes(x.txTo) || SIGNED_PAYMENT_SEL.includes(x.sel);
 // ERC-4337 EntryPoints (v0.6, v0.7, v0.8): a bundler submits the owner's own smart-account operations. Only on a chain where the
 // wallet is delegated to an unknown contract does a bundler moving funds mean the attacker's code is running.
@@ -94,6 +96,7 @@ export async function onRequestGet(ctx) {
       .map(x => ({ to: x.to, chain: x.chain, ts: x.ts, native: x.native, priced: !!x.priced, asset: x.asset, value: x.value, usd: Math.round(x.usd * 100) / 100, hash: x.hash, txType: x.txType, signer: x.signer }));
     const candidates = findIncidents(out, address), keySweeps = findKeySweep({ tail, self: address, seen, lastOn, strangeCount, legacyShare });
     const knownDelegate = new Set(chains.filter(c => c.delegateName).map(c => c.key));
+    const orders = out.filter(x => x.priced && x.usd >= 1 && x.signer && x.signer !== address && orderFill(x)).map(x => ({ venue: ORDER_VENUES[x.txTo], to: x.to, chain: x.chain, asset: x.asset, value: x.value, usd: Math.round(x.usd * 100) / 100, ts: x.ts, hash: x.hash }));
     const pulls = findPull(out, address, knownDelegate, new Set(chains.filter(c => c.delegate && !c.delegateName).map(c => c.key))), poisonLoss = findPoisonLoss(out, address);
     const want = [...new Set(sent.slice(0, 50).map(c => c.address).concat(received.slice(0, 25).map(c => c.address), candidates.map(c => c.to), sweep.map(s => s.address), keySweeps.map(k => k.address), pulls.map(p => p.to), pulls.map(p => p.txTo), (approvals || []).slice(0, 40).map(a => a.spender)))].filter(Boolean);
     const lab = await t.step("address_labels", { addresses: want.length }, () => labels(env, request, want));
@@ -136,7 +139,7 @@ export async function onRequestGet(ctx) {
     }
     const compromise = {
       level: (sweeper || keySweep) && (sweeper && sweeper.type4 || strange.length) ? "confirmed" : sweeper || keySweep ? "likely" : strange.length ? "suspected" : "none",
-      sweeper, keySweep, pull, poisonLoss, delegations: chains.filter(c => c.delegate).map(c => ({ chain: c.key, chainName: c.name, delegate: c.delegate, name: c.delegateName, verified: c.delegateVerified == null ? null : c.delegateVerified })), poisoning: poison,
+      sweeper, keySweep, pull, poisonLoss, orders, delegations: chains.filter(c => c.delegate).map(c => ({ chain: c.key, chainName: c.name, delegate: c.delegate, name: c.delegateName, verified: c.delegateVerified == null ? null : c.delegateVerified })), poisoning: poison,
     };
 
     // a burst of several assets leaving at once, on top of the sweeper check; moving funds to a labelled service is ordinary use
@@ -185,7 +188,7 @@ const cnt = l => l.reduce((a, x) => a + x.count, 0);
 function findSweeper(out, self, strangeChains) {
   const m = {};
   for (const x of out) {
-    if (!x.signer || x.signer === self || BURN.includes(x.to) || signedPayment(x)) continue;
+    if (!x.signer || x.signer === self || BURN.includes(x.to) || signedPayment(x) || orderFill(x)) continue;
     if (!x.priced && !x.type4) continue; // anyone can deploy a fake token that claims a transfer from this wallet; only real assets count
     if (x.signer !== x.to && !(x.type4 && strangeChains.has(x.chain))) continue; // a sponsored 7702 transaction through known wallet software is ordinary
     const s = m[x.to] || (m[x.to] = { address: x.to, count: 0, usd: 0, type4: false, chains: {}, first: x.ts || Infinity, last: x.ts });
@@ -211,7 +214,7 @@ function findPoisoning(out, sent) {
 // Tokens taken by someone else's transaction: the wallet once signed a permission (approve, permit, Permit2, setApprovalForAll)
 // and a third party used it. Chains where the wallet runs known smart-account software are skipped: there a relayer sends the owner's own transactions.
 function findPull(out, self, knownDelegate, strangeChains) {
-  return out.filter(x => x.priced && x.usd >= 1 && x.signer && x.signer !== self && x.signer !== x.to && x.to !== self && !BURN.includes(x.to) && !knownDelegate.has(x.chain) && !signedPayment(x) && !(ENTRYPOINTS.includes(x.txTo) && !strangeChains.has(x.chain)))
+  return out.filter(x => x.priced && x.usd >= 1 && x.signer && x.signer !== self && x.signer !== x.to && x.to !== self && !BURN.includes(x.to) && !knownDelegate.has(x.chain) && !signedPayment(x) && !orderFill(x) && !(ENTRYPOINTS.includes(x.txTo) && !strangeChains.has(x.chain)))
     .map(x => ({ to: x.to, chain: x.chain, ts: x.ts, asset: x.asset, value: x.value, usd: x.usd, hash: x.hash, signer: x.signer, txTo: x.txTo, contract: x.contract, how: (x.txTo === x.contract || x.txTo === PERMIT2) && PULL_SELECTORS[x.sel] ? PULL_SELECTORS[x.sel] + " (a permission the wallet gave)" : strangeChains.has(x.chain) ? "the unknown EIP-7702 delegate" : PULL_SELECTORS[x.sel] || (x.txTo === PERMIT2 ? "Permit2" : "a contract call") }));
 }
 function summarisePulls(list) {
@@ -323,6 +326,7 @@ function checks({ compromise, incident, risk, approvals }) {
     poisonloss: c.poisonLoss.length ? `${c.poisonLoss.length} payment(s) to a planted look-alike` : null,
     poisoning: c.poisoning.length ? `${c.poisoning.length} look-alike address(es) planted` : null,
     approvals: approvals === null ? undefined : risk.counts.risky || risk.counts.closed ? `${risk.counts.risky} flagged, ${risk.counts.closed} closed-source spender(s)` : null,
+    orders: c.orders.length ? `${c.orders.length} order(s) filled on ${[...new Set(c.orders.map(o => o.venue))].join(", ")}, about ${money(c.orders.reduce((a, o) => a + o.usd, 0))}` : null,
     flagged: risk.counts.badPeers ? `${risk.counts.badPeers} flagged receiver(s)` : null,
   };
   return METHODS.map(m => ({ id: m.id, name: m.name, how: m.how, found: found[m.id] === undefined ? null : !!found[m.id], detail: found[m.id] || null }));
@@ -349,6 +353,10 @@ function story({ incident, compromise, approvals, flags, risk, out, inn, chains 
   }
   if (compromise.pull.some(p => !p.how.every(h => h.includes("delegate")))) s.push("Revoke every permission under “Open doors”. The key itself may still be safe, but any token with an open permission can be taken the same way.");
   for (const p of compromise.poisonLoss.slice(0, 2)) s.push(`Address poisoning worked here: ${money(p.usd)} was sent to ${p.fake.slice(0, 6)}…${p.fake.slice(-4)}, a fake planted on ${when(p.plantedAt)} to look like ${p.real.slice(0, 6)}…${p.real.slice(-4)}, an address this wallet really uses.`);
+  if (compromise.orders.length) {
+    const o = compromise.orders;
+    s.push(`${o.length} order${o.length > 1 ? "s" : ""} this wallet signed ${o.length > 1 ? "were" : "was"} filled by someone else on ${names([...new Set(o.map(x => x.venue))])}, moving about ${money(o.reduce((a, x) => a + x.usd, 0))}. If you made ${o.length > 1 ? "those offers or swaps" : "that offer or swap"}, it is your own trade. If you did not, you signed a phished order: a fake site asked for a signature that let a stranger take the tokens.`);
+  }
   if (strange.length) s.push(`${sw || ks ? "The wallet is also" : "This wallet is"} delegated to a contract I do not recognise on ${names(strange.map(d => d.chainName))}${strange.length > 1 && new Set(strange.map(d => d.delegate)).size > 1 ? ", a different one on each chain" : ""}. A delegate contract can act as the wallet. ${sw ? "That is how incoming funds get swept." : "If you did not set this up, treat the wallet as compromised."}`);
   const known = compromise.delegations.filter(d => d.name);
   if (known.length && !sw) s.push(`It is delegated to ${known[0].name} on ${names(known.map(d => d.chainName))}. That is ordinary wallet software.`);

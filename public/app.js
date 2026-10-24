@@ -129,7 +129,7 @@
     if (!sw && sw2) { compromise.sweeper = sw2; compromise.keySweep = null; story = b.story; }
     else if (sw && sw2 && sw.address === sw2.address) compromise.sweeper = { ...sw, chains: [...new Set(sw.chains.concat(sw2.chains))], allChains: [...new Set(sw.allChains.concat(sw2.allChains))], totalCount: sw.totalCount + sw2.totalCount, totalUsd: sw.totalUsd + sw2.totalUsd, type4: sw.type4 || sw2.type4, swarmCase: sw.swarmCase || sw2.swarmCase };
     else if (sw && sw2) sweeps = a.sweeps; // a different sweeper elsewhere: the first one found leads the story
-    compromise.pull = (a.compromise.pull || []).concat(b.compromise.pull || []); compromise.poisonLoss = (a.compromise.poisonLoss || []).concat(b.compromise.poisonLoss || []);
+    compromise.pull = (a.compromise.pull || []).concat(b.compromise.pull || []); compromise.orders = (a.compromise.orders || []).concat(b.compromise.orders || []); compromise.poisonLoss = (a.compromise.poisonLoss || []).concat(b.compromise.poisonLoss || []);
     const xa = a.cross, xb = b.cross, cross = xa && xb ? { tail: xa.tail.concat(xb.tail), seen: { ...xb.seen }, lastOn: { ...xa.lastOn, ...xb.lastOn }, strangeCount: xa.strangeCount + xb.strangeCount, typed: xa.typed + xb.typed, legacy: xa.legacy + xb.legacy } : xa || xb;
     if (xa && xb) Object.entries(xa.seen).forEach(([k, v]) => cross.seen[k] = Math.min(v, cross.seen[k] || Infinity));
     const checks = (a.checks || []).map(c => { const o = (b.checks || []).find(x => x.id === c.id) || {}; return { ...c, found: c.found || o.found ? true : c.found === null && o.found === null ? null : false, detail: c.detail || o.detail || null }; });

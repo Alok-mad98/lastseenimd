@@ -1,5 +1,6 @@
 # Local secrets for `npx wrangler pages dev`. Copy to .dev.vars and fill in. Never commit .dev.vars.
 ALCHEMY_KEY=
+ALCHEMY_KEY_2=        # tried first; the first key takes over when this one runs out
 SUBQ_API_KEY=
 MONID_API_KEY=
 # optional: Neatlogs tracing

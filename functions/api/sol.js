@@ -1,4 +1,4 @@
-import { json, tracer } from "../_lib.js";
+import { json, tracer, batch } from "../_lib.js";
 
 // GET /api/sol?address=<base58>  →  a Solana wallet's case file.
 // Solana has no approvals list and no EIP-7702, but it has its own ways to lose funds:
@@ -8,14 +8,9 @@ import { json, tracer } from "../_lib.js";
 export const isSol = a => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(a || "");
 const LAMPORTS = 1e9;
 
-async function rpc(env, calls) {
-  const r = await fetch("https://solana-mainnet.g.alchemy.com/v2/" + env.ALCHEMY_KEY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(calls.map(([method, params], id) => ({ jsonrpc: "2.0", id, method, params }))) });
-  const j = await r.json();
-  if (!Array.isArray(j)) throw new Error((j.error && j.error.message) || "bad response");
-  const out = calls.map(() => null);
-  for (const x of j) if (x && x.error == null) out[x.id] = x.result;
-  return out;
-}
+// Solana's JSON-RPC through the same Alchemy keys, with the same rotation when one runs out
+const SOLANA = { host: "solana-mainnet", name: "Solana" };
+const rpc = (env, calls) => batch(env, SOLANA, calls);
 
 export async function onRequestGet(ctx) {
   const { request, env } = ctx;

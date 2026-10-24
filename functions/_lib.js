@@ -57,20 +57,37 @@ export const CHAINS = [
 export const SOLANA_IDS = [792703809, 1151111081099710];
 export const chainOf = k => CHAINS.find(c => c.key === k) || CHAINS[0];
 
+// Two Alchemy keys, the second first: when one hits its monthly or per-second limit, the request is sent again with the other,
+// and a key that ran out is skipped for ten minutes by this worker.
+const spent = {};
+const LIMIT = /capacity|exceeded|limit|throughput|too many|429/i;
+async function alchemy(env, chain, body) {
+  const keys = [env.ALCHEMY_KEY_2, env.ALCHEMY_KEY].filter(Boolean);
+  if (!keys.length) throw new Error("no Alchemy key configured");
+  const live = keys.filter(k => !(spent[k] > Date.now())), order = live.length ? live : keys;
+  let last;
+  for (const k of order) {
+    const r = await fetch("https://" + chain.host + ".g.alchemy.com/v2/" + k, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    let j = null; try { j = await r.json(); } catch { j = null; }
+    const err = !j ? "bad response" : Array.isArray(j) ? (j.length && j.every(x => x && x.error) ? j[0].error.message : null) : j.error ? j.error.message : null;
+    if (r.status === 429 || (err && LIMIT.test(err))) { spent[k] = Date.now() + 10 * 60 * 1000; last = err || "rate limited"; continue; }
+    return j;
+  }
+  throw new Error(chain.name + ": every Alchemy key is out of capacity (" + last + ")");
+}
+
 // Several JSON-RPC calls in one HTTP request. A failed call comes back as null instead of failing the rest.
 export async function batch(env, chain, calls) {
   if (!calls.length) return [];
-  const r = await fetch("https://" + chain.host + ".g.alchemy.com/v2/" + env.ALCHEMY_KEY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(calls.map(([method, params], i) => ({ jsonrpc: "2.0", id: i, method, params }))) });
-  const j = await r.json();
-  if (!Array.isArray(j)) throw new Error(chain.name + ": " + ((j.error && j.error.message) || "bad response"));
+  const j = await alchemy(env, chain, calls.map(([method, params], i) => ({ jsonrpc: "2.0", id: i, method, params })));
+  if (!Array.isArray(j)) throw new Error(chain.name + ": " + ((j && j.error && j.error.message) || "bad response"));
   const out = calls.map(() => null);
   for (const x of j) if (x && x.error == null) out[x.id] = x.result;
   return out;
 }
 export async function rpc(env, method, params, chain = CHAINS[0]) {
-  const r = await fetch("https://" + chain.host + ".g.alchemy.com/v2/" + env.ALCHEMY_KEY, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-  const j = await r.json();
-  if (j.error) throw new Error(method + ": " + j.error.message);
+  const j = await alchemy(env, chain, { jsonrpc: "2.0", id: 1, method, params });
+  if (!j || j.error) throw new Error(method + ": " + ((j && j.error && j.error.message) || "bad response"));
   return j.result;
 }
 
